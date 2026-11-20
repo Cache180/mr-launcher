@@ -198,7 +198,7 @@ TEST_CASE("MR::BuildServerListWith: entradas invalidas se omiten sin consultarla
     REQUIRE(List.size() == 2);
     CHECK(List[0]["ip"] == "ok.example.org");
     CHECK(List[1]["ip"] == "ok3.example.org");
-    CHECK(Count == 2);
+    CHECK(Count.load() == 2);
 }
 
 TEST_CASE("MR::BuildServerListWith: sin servers validos, un arreglo vacio") {
@@ -254,7 +254,7 @@ TEST_CASE("MR::BuildServerListWith: no consulta mas de MaxServers entradas") {
     };
     json List = json::parse(MR::BuildServerListWith(Servers, Query));
     CHECK(List.size() == MR::MaxServers);
-    CHECK(Count == MR::MaxServers);
+    CHECK(Count.load() == MR::MaxServers);
 }
 
 TEST_CASE("MR::BuildServerListWith: la salida es JSON valido aunque el server mande bytes invalidos") {

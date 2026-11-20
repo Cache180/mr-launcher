@@ -31,7 +31,6 @@ void InitOptions(int argc, const char *argv[], Options &options) {
             options.verbose = true;
             options.no_download = true;
             options.no_launch = true;
-            options.no_update = true;
             warn("You are using deprecated commandline arguments, please use --dev instead");
             return;
         }
@@ -77,15 +76,12 @@ void InitOptions(int argc, const char *argv[], Options &options) {
             options.verbose = true;
         } else if (argument == "--no-download") {
             options.no_download = true;
-        } else if (argument == "--no-update") {
-            options.no_update = true;
         } else if (argument == "--no-launch") {
             options.no_launch = true;
         } else if (argument == "--dev") {
             options.verbose = true;
             options.no_download = true;
             options.no_launch = true;
-            options.no_update = true;
         } else if (argument == "--user-path") {
             if (i + 1 >= argc) {
                 error("You must specify a path after the `--user-path` argument");
@@ -97,18 +93,17 @@ void InitOptions(int argc, const char *argv[], Options &options) {
             options.game_arguments_length = argc - i - 1;
             break;
         } else if (argument == "--help" || argument == "-h" || argument == "/?") {
-            std::cout << "USAGE:\n"
-                "\t" + std::filesystem::path(options.executable_name).filename().string() + " [OPTIONS] [-- <GAME ARGS>...]\n"
+            std::cout << "USO:\n"
+                "\t" + std::filesystem::path(options.executable_name).filename().string() + " [OPCIONES] [-- <ARGS DEL JUEGO>...]\n"
                 "\n"
-                "OPTIONS:\n"
-                "\t--port <port>    -p  Change the default listen port to <port>. This must be configured ingame, too\n"
-                "\t--verbose        -v  Verbose mode, prints debug messages\n"
-                "\t--no-download        Skip downloading and installing the BeamMP Lua mod\n"
-                "\t--no-update          Skip applying launcher updates (you must update manually)\n"
-                "\t--no-launch          Skip launching the game (you must launch the game manually)\n"
-                "\t--dev                Developer mode, same as --verbose --no-download --no-launch --no-update\n"
-                "\t--user-path <path>   Path to BeamNG's User Path\n"
-                "\t--game <args...>     Passes ALL following arguments to the game, see also `--`\n"
+                "OPCIONES:\n"
+                "\t--port <puerto>    -p  Cambia el puerto local de escucha a <puerto>. Debe configurarse igual en el juego\n"
+                "\t--verbose        -v  Modo detallado, muestra mensajes de depuracion\n"
+                "\t--no-download        No instalar el mod local (MRMP.zip)\n"
+                "\t--no-launch          No iniciar el juego (hay que iniciarlo a mano)\n"
+                "\t--dev                Modo desarrollo, igual que --verbose --no-download --no-launch\n"
+                "\t--user-path <ruta>   Ruta de usuario de BeamNG\n"
+                "\t--game <args...>     Pasa TODOS los argumentos siguientes al juego, ver tambien `--`\n"
                 << std::flush;
             exit(0);
         } else {

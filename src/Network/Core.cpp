@@ -4,12 +4,12 @@
  SPDX-License-Identifier: AGPL-3.0-or-later
 */
 
-#include "Http.h"
+#include "MRChannel.h"
+#include "MRServers.h"
 #include "Network/network.hpp"
 #include "Security/Init.h"
 #include "Utils.h"
 #include <cstdlib>
-#include <regex>
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -28,7 +28,6 @@
 #include "Logger.h"
 #include "Startup.h"
 #include <charconv>
-#include <nlohmann/json.hpp>
 #include <set>
 #include <thread>
 #include <mutex>
@@ -40,10 +39,9 @@ extern int TraceBack;
 std::set<std::string>* ConfList = nullptr;
 bool TCPTerminate = false;
 bool Terminate = false;
-bool LoginAuth = false;
-std::string Username = "";
-std::string UserRole = "";
-int UserID = -1;
+// Lo que Auth() envia al server como clave publica. Ya no hay login contra BeamMP,
+// asi que siempre va vacia; el handshake lo reemplaza la tarea de identidad del server.
+std::string PublicKey;
 std::string UlStatus;
 std::string MStatus;
 bool ModLoaded;
@@ -80,7 +78,6 @@ void StartSync(const std::string& Data) {
         CoreSend("L");
         return;
     }
-    CheckLocalKey();
     UlStatus = "UlLoading...";
     TCPTerminate = false;
     Terminate = false;
@@ -94,94 +91,21 @@ void StartSync(const std::string& Data) {
 void GetServerInfo(std::string Data) {
     debug("Fetching server info of " + Data.substr(1));
 
-    std::string IP = GetAddr(Data.substr(1, Data.find(':') - 1));
-    if (IP.find('.') == -1) {
-        if (IP == "DNS")
-            warn("Connection Failed! (DNS Lookup Failed) for " + Data);
-        else
-            warn("Connection Failed! (WSA failed to start) for " + Data);
-        CoreSend("I" + Data + ";");
-        return;
+    // Data = "I<host>:<port>"; sin respuesta valida el juego recibe la entrada vacia.
+    std::string Info;
+    const size_t Colon = Data.find(':');
+    if (Colon != std::string::npos) {
+        int Port = 0; // un puerto ilegible queda en 0 y la consulta lo rechaza
+        const std::string PortText = Data.substr(Colon + 1);
+        std::from_chars(PortText.data(), PortText.data() + PortText.size(), Port);
+        Info = QueryServerInfo(Data.substr(1, Colon - 1), Port);
     }
-
-    SOCKET ISock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    SOCKADDR_IN ServerAddr;
-    if (ISock < 1) {
-        debug("Socket creation failed with error: " + std::to_string(WSAGetLastError()));
-        KillSocket(ISock);
-        CoreSend("I" + Data + ";");
-        return;
+    if (!Info.empty()) {
+        debug("Server Info: " + Info);
     }
-    ServerAddr.sin_family = AF_INET;
-
-    int port = std::stoi(Data.substr(Data.find(':') + 1));
-
-    if (port < 1 || port > 65535) {
-        debug("Invalid port number: " + std::to_string(port));
-        KillSocket(ISock);
-        CoreSend("I" + Data + ";");
-        return;
-    }
-
-    ServerAddr.sin_port = htons(port);
-    inet_pton(AF_INET, IP.c_str(), &ServerAddr.sin_addr);
-    if (connect(ISock, (SOCKADDR*)&ServerAddr, sizeof(ServerAddr)) != 0) {
-        debug("Connection to server failed with error: " + std::to_string(WSAGetLastError()));
-        KillSocket(ISock);
-        CoreSend("I" + Data + ";");
-        return;
-    }
-
-    char Code[1] = { 'I' };
-    if (send(ISock, Code, 1, 0) != 1) {
-        debug("Sending data to server failed with error: " + std::to_string(WSAGetLastError()));
-        KillSocket(ISock);
-        CoreSend("I" + Data + ";");
-        return;
-    }
-
-    const std::string buffer = ([&]() -> std::string {
-        int32_t Header;
-        std::vector<char> data(sizeof(Header));
-        int Temp = RecvWaitAll(ISock, data.data(), sizeof(Header));
-
-        auto checkBytes = ([&](const int32_t bytes, const int32_t expected = -1) -> bool {
-            if (bytes == 0) {
-                return false;
-            } else if (bytes < 0) {
-                return false;
-            }
-            if (expected != -1 && bytes != expected) {
-                return false;
-            }
-            return true;
-        });
-
-        if (!checkBytes(Temp, sizeof(Header))) {
-            return "";
-        }
-        memcpy(&Header, data.data(), sizeof(Header));
-
-        data.resize(Header, 0);
-        Temp = RecvWaitAll(ISock, data.data(), Header);
-        if (!checkBytes(Temp, Header)) {
-            return "";
-        }
-        return std::string(data.data(), Header);
-    })();
-
-    if (!buffer.empty()) {
-        debug("Server Info: " + buffer);
-
-        CoreSend("I" + Data + ";" + buffer);
-    } else {
-        debug("Receiving data from server failed with error: " + std::to_string(WSAGetLastError()));
-        debug("Failed to receive server info from " + Data);
-        CoreSend("I" + Data + ";");
-    }
-
-    KillSocket(ISock);
+    CoreSend("I" + Data + ";" + Info);
 }
+
 std::mutex sendMutex;
 
 void CoreSend(std::string data) {
@@ -194,12 +118,6 @@ void CoreSend(std::string data) {
             debug("(Core) send failed with error: " + std::to_string(WSAGetLastError()));
         }
     }
-}
-
-bool IsAllowedLink(const std::string& Link) {
-    std::regex link_pattern(R"(https:\/\/(?:\w+)?(?:\.)?(?:beammp\.com|beammp\.gg|github\.com\/BeamMP\/|discord\.gg|patreon\.com\/BeamMP))");
-    std::smatch link_match;
-    return std::regex_search(Link, link_match, link_pattern) && link_match.position() == 0;
 }
 
 std::vector<std::future<void>> futures;
@@ -225,8 +143,8 @@ void Parse(std::string Data, SOCKET CSocket) {
             Terminate = true;
             TCPTerminate = true;
             Data.clear();
-            futures.push_back(std::async(std::launch::async, []() {
-                CoreSend("B" + HTTP::Get("https://backend.beammp.com/servers-info"));
+            futures.push_back(std::async(std::launch::async, [Servers = ConfiguredServers]() {
+                CoreSend("B" + MR::BuildServerList(Servers));
             }));
         }
         break;
@@ -235,7 +153,7 @@ void Parse(std::string Data, SOCKET CSocket) {
         Data.clear();
         break;
     case 'O': // open default browser with URL
-        if (IsAllowedLink(Data.substr(1))) {
+        if (MR::IsAllowedLink(Data.substr(1))) {
 #if defined(__linux)
             if (char* browser = getenv("BROWSER"); browser != nullptr && !std::string_view(browser).empty()) {
                 pid_t pid;
@@ -309,26 +227,7 @@ void Parse(std::string Data, SOCKET CSocket) {
         Data = "Z" + GetVer();
         break;
     case 'N':
-        if (SubCode == 'c') {
-            nlohmann::json Auth = {
-                { "Auth", LoginAuth ? 1 : 0 },
-            };
-            if (!Username.empty()) {
-                Auth["username"] = Username;
-            }
-            if (!UserRole.empty()) {
-                Auth["role"] = UserRole;
-            }
-            if (UserID != -1) {
-                Auth["id"] = UserID;
-            }
-            Data = "N" + Auth.dump();
-        } else {
-            futures.push_back(std::async(std::launch::async, [data = std::move(Data)]() {
-                CoreSend("N" + Login(data.substr(data.find(':') + 1)));
-            }));
-            Data.clear();
-        }
+        Data = MR::HandleIdentityMessage(Data, ConfigFile, Username);
         break;
     case 'W':
         if (SubCode == 'Y') {
@@ -419,10 +318,11 @@ void CoreMain() {
     }
     iRes = bind(LSocket, res->ai_addr, int(res->ai_addrlen));
     if (iRes == SOCKET_ERROR) {
-        error("(Core) bind failed with error: " + std::to_string(WSAGetLastError()));
+        debug("(Core) bind failed with error: " + std::to_string(WSAGetLastError()));
         freeaddrinfo(res);
         KillSocket(LSocket);
         WSACleanup();
+        fatal("No se pudo abrir el puerto local " + std::to_string(options.port) + ": ¿hay otro launcher abierto?");
         return;
     }
     iRes = listen(LSocket, SOMAXCONN);

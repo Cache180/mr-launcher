@@ -10,14 +10,13 @@
 
 struct Options {
 #if defined(_WIN32)
-    std::string executable_name = "BeamMP-Launcher.exe";
+    std::string executable_name = "MR-Launcher.exe";
 #elif defined(__linux__)
-    std::string executable_name = "BeamMP-Launcher";
+    std::string executable_name = "MR-Launcher";
 #endif
     unsigned int port = 4464;
     bool verbose = false;
     bool no_download = false;
-    bool no_update = false;
     bool no_launch = false;
     const char* user_path = nullptr;
     const char **game_arguments = nullptr;

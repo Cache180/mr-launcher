@@ -6,14 +6,45 @@ env:
   BUILD_TYPE: Release
 
 jobs:
+  fetch-mod:
+    # MRMP.zip sale del ultimo package.yml verde de Cache180/mr-mp (repo publico).
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download MRMP.zip from the latest green package.yml run of mr-mp
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id=$(gh run list --repo Cache180/mr-mp --workflow package.yml --branch mr-main --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "no hay ninguna ejecucion verde de package.yml en Cache180/mr-mp" >&2
+            exit 1
+          fi
+          echo "mr-mp package.yml run: $run_id"
+          gh run download "$run_id" --repo Cache180/mr-mp --name MRMP --dir mrmp
+          cd mrmp
+          sha256sum -c MRMP.zip.sha256
+          ls -l
+
+      - name: Keep MRMP.zip for the build job
+        uses: actions/upload-artifact@v4
+        with:
+          name: mrmp-zip
+          path: |
+            mrmp/MRMP.zip
+            mrmp/MRMP.zip.sha256
+          if-no-files-found: error
+
   windows-build:
+    needs: fetch-mod
     runs-on: windows-latest
-    
+
     steps:
       - uses: actions/checkout@v2
         with:
             submodules: 'true'
-      
+
       - name: Restore artifacts, or run vcpkg, build and cache artifacts
         uses: lukka/run-vcpkg@v7
         id: runvcpkg
@@ -46,8 +77,33 @@ jobs:
         shell: bash
         run: ./Release/MR-Launcher-tests.exe
 
+      - name: Static check - MR-Launcher.exe has no BeamMP hosts
+        shell: bash
+        run: |
+          python -I .github/scripts/check_exe_strings.py \
+            "${{github.workspace}}/build-windows/Release/MR-Launcher.exe" \
+            --forbid beammp.com beammp.gg \
+            --require muertazosracing.com
+
+      - name: Download MRMP.zip
+        uses: actions/download-artifact@v4
+        with:
+          name: mrmp-zip
+          path: ${{github.workspace}}/mod
+
+      - name: Package MR-Launcher.exe and MRMP.zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd mod && sha256sum -c MRMP.zip.sha256)
+          mkdir dist
+          cp build-windows/Release/MR-Launcher.exe dist/
+          cp mod/MRMP.zip dist/
+          ls -l dist
+
       - name: Archive artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: BeamMP-Launcher.exe
-          path: ${{github.workspace}}/build-windows/Release/BeamMP-Launcher.exe
+          name: MR-Launcher
+          path: ${{github.workspace}}/dist/
+          if-no-files-found: error

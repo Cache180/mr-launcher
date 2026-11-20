@@ -10,7 +10,6 @@
 #include "Security/Init.h"
 #include "Startup.h"
 #include "Utils.h"
-#include <curl/curl.h>
 #include <iostream>
 #include <thread>
 #include "Options.h"
@@ -36,8 +35,6 @@ int main(int argc, const char** argv) try {
     th.detach();
 #endif
 
-    curl_global_init(CURL_GLOBAL_ALL);
-
     GetEP(Utils::ToWString(std::string(argv[0])).c_str());
 
     InitLog();
@@ -45,7 +42,8 @@ int main(int argc, const char** argv) try {
     InitOptions(argc, argv, options);
     InitLauncher();
 
-    info("IMPORTANT: You MUST keep this window open to play BeamMP!");
+    info("Basado en BeamMP-Launcher (AGPL-3.0). Codigo: https://github.com/Cache180/mr-launcher");
+    info("IMPORTANTE: manten esta ventana abierta mientras juegas en MR.");
 
     try {
         LegitimacyCheck();
@@ -57,14 +55,14 @@ int main(int argc, const char** argv) try {
     try {
         HTTP::StartProxy();
     } catch (const std::exception& e) {
-        error(std::string("Failed to start HTTP proxy: Some in-game functions may not work. Error: ") + e.what());
+        error(std::string("No se pudo iniciar el servidor HTTP local: algunas funciones del juego pueden no funcionar. Error: ") + e.what());
     }
     PreGame(GetGameDir());
     InitGame(GetGameDir());
     CoreNetwork();
 } catch (const std::exception& e) {
-    error(std::string("Exception in main(): ") + e.what());
-    info("Closing in 5 seconds");
-    info("If this keeps happening, contact us on either: Forum: https://forum.beammp.com, Discord: https://discord.gg/beammp");
+    error(std::string("Excepcion en main(): ") + e.what());
+    info("Cerrando en 5 segundos");
+    info("Si esto sigue pasando, escribenos en https://muertazosracing.com");
     std::this_thread::sleep_for(std::chrono::seconds(5));
 }

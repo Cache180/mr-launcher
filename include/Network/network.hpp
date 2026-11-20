@@ -7,6 +7,7 @@
 
 #pragma once
 #include <filesystem>
+#include <nlohmann/json_fwd.hpp>
 #include <string>
 
 #ifdef __linux__
@@ -29,7 +30,6 @@ extern bool ModLoaded;
 extern bool Terminate;
 extern uint64_t UDPSock;
 extern uint64_t TCPSock;
-extern std::string Branch;
 extern std::filesystem::path CachingDirectory;
 extern bool deleteDuplicateMods;
 extern bool TCPTerminate;
@@ -37,7 +37,9 @@ extern std::string LastIP;
 extern std::string MStatus;
 extern std::string UlStatus;
 extern std::string PublicKey;
-extern std::string PrivateKey;
+extern std::string Username;
+extern const std::filesystem::path ConfigFile;
+extern nlohmann::json ConfiguredServers;
 extern std::string magic;
 int KillSocket(uint64_t Dead);
 void UUl(const std::string& R);
@@ -49,7 +51,6 @@ std::string TCPRcv(uint64_t Sock);
 void SyncResources(uint64_t TCPSock);
 std::string GetAddr(const std::string& IP);
 void ServerParser(std::string_view Data);
-std::string Login(const std::string& fields);
 void TCPSend(const std::string& Data, uint64_t Sock);
 void TCPClientMain(const std::string& IP, int Port);
 void UDPClientMain(const std::string& IP, int Port);
@@ -57,3 +58,4 @@ void TCPGameServer(const std::string& IP, int Port);
 bool SecurityWarning();
 void CoreSend(std::string data);
 int RecvWaitAll(int sockfd, char *buf, int len);
+std::string QueryServerInfo(const std::string& Host, int Port);

@@ -14,28 +14,32 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG")
 
 add_compile_definitions(CPPHTTPLIB_OPENSSL_SUPPORT)
 
+# Las cadenas visibles llevan acentos y signos (UTF-8) en el codigo fuente.
+if (MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 file(GLOB source_files "src/*.cpp" "src/*/*.cpp" "src/*/*.hpp" "include/*.h"  "include/*/*.h" "include/*/*/*.h" "include/*.hpp"  "include/*/*.hpp" "include/*/*/*.hpp")
 find_package(httplib CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(CURL REQUIRED)
 
 add_executable(${PROJECT_NAME} ${source_files})
-set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "BeamMP-Launcher")
+set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "MR-Launcher")
 
 if (WIN32)
     find_package(ZLIB REQUIRED)
     find_package(OpenSSL REQUIRED)
     target_link_libraries(${PROJECT_NAME} PRIVATE
-            ZLIB::ZLIB OpenSSL::SSL OpenSSL::Crypto ws2_32 httplib::httplib nlohmann_json::nlohmann_json CURL::libcurl)
+            ZLIB::ZLIB OpenSSL::SSL OpenSSL::Crypto ws2_32 crypt32 httplib::httplib nlohmann_json::nlohmann_json)
 elseif (UNIX)
     find_package(ZLIB REQUIRED)
     find_package(OpenSSL REQUIRED)
     target_link_libraries(${PROJECT_NAME} PRIVATE
-            ZLIB::ZLIB OpenSSL::SSL OpenSSL::Crypto CURL::libcurl)
+            ZLIB::ZLIB OpenSSL::SSL OpenSSL::Crypto)
 else(WIN32) #MINGW
     add_definitions("-D_WIN32_WINNT=0x0600")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Os -s --static")
-    target_link_libraries(${PROJECT_NAME} ssl crypto ws2_32 ssp crypt32 z CURL::libcurl)
+    target_link_libraries(${PROJECT_NAME} ssl crypto ws2_32 ssp crypt32 z)
 endif(WIN32)
 target_include_directories(${PROJECT_NAME} PRIVATE "include")
 
@@ -50,7 +54,10 @@ if (MR_BUILD_TESTS)
             test/test_servers.cpp
             test/test_mods.cpp
             test/test_channel.cpp
-            src/MRIdentity.cpp)
+            src/MRIdentity.cpp
+            src/MRServers.cpp
+            src/MRMods.cpp
+            src/MRChannel.cpp)
     target_include_directories(MR-Launcher-tests PRIVATE "include")
     target_link_libraries(MR-Launcher-tests PRIVATE
             doctest::doctest nlohmann_json::nlohmann_json OpenSSL::Crypto)

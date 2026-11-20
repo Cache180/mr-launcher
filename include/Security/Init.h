@@ -11,4 +11,3 @@ std::string CheckVer(const std::filesystem::path& path);
 void InitGame(const beammp_fs_string& Dir);
 beammp_fs_string GetGameDir();
 void LegitimacyCheck();
-void CheckLocalKey();

@@ -46,6 +46,10 @@ LauncherIdentity LoadOrCreateIdentity(const std::filesystem::path& CfgFile);
 // Valida y guarda el nombre. Si es invalido deja Reason y no toca el archivo.
 bool SetPilotName(const std::filesystem::path& CfgFile, std::string_view Name, std::string& Reason);
 
+// Borra el nombre guardado (queda "" y el resto del cfg se conserva). Si no puede
+// guardar, deja Reason y no toca el archivo.
+bool ClearPilotName(const std::filesystem::path& CfgFile, std::string& Reason);
+
 // {"name":"...","install":"..."} (JSON UTF-8, <= 256 bytes con valores validos).
 std::string IdentityPacket(const LauncherIdentity& Identity);
 

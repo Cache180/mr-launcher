@@ -251,6 +251,36 @@ namespace {
         return Prepare::Ok;
     }
 
+    // Guarda Name (ya validado, o "" para borrarlo) en el cfg. Unica via de
+    // escritura del nombre: SetPilotName y ClearPilotName pasan por aqui.
+    bool StoreName(const fs::path& CfgFile, std::string_view Name, std::string& Reason) {
+        try {
+            Json Doc = Json::object();
+            bool Changed = false;
+            switch (PrepareConfig(CfgFile, GenerateInstallKey, Doc, Changed)) {
+            case Prepare::Ok:
+                break;
+            case Prepare::Unreadable:
+                Reason = "no se pudo leer " + CfgFile.filename().string() + ": cierra lo que lo este usando y vuelve a intentarlo";
+                return false;
+            case Prepare::BackupFailed:
+            case Prepare::NoKey:
+                Reason = SaveReason;
+                return false;
+            }
+            Doc["Name"] = std::string(Name);
+            if (!WriteConfigAtomic(CfgFile, Doc)) {
+                Reason = SaveReason;
+                return false;
+            }
+            Reason.clear();
+            return true;
+        } catch (...) {
+            Reason = SaveReason;
+            return false;
+        }
+    }
+
 }
 
 bool IsValidPilotName(std::string_view Name) {
@@ -329,31 +359,11 @@ bool SetPilotName(const fs::path& CfgFile, std::string_view Name, std::string& R
         Reason = NameReason;
         return false;
     }
-    try {
-        Json Doc = Json::object();
-        bool Changed = false;
-        switch (PrepareConfig(CfgFile, GenerateInstallKey, Doc, Changed)) {
-        case Prepare::Ok:
-            break;
-        case Prepare::Unreadable:
-            Reason = "no se pudo leer " + CfgFile.filename().string() + ": cierra lo que lo este usando y vuelve a intentarlo";
-            return false;
-        case Prepare::BackupFailed:
-        case Prepare::NoKey:
-            Reason = SaveReason;
-            return false;
-        }
-        Doc["Name"] = std::string(Name);
-        if (!WriteConfigAtomic(CfgFile, Doc)) {
-            Reason = SaveReason;
-            return false;
-        }
-        Reason.clear();
-        return true;
-    } catch (...) {
-        Reason = SaveReason;
-        return false;
-    }
+    return StoreName(CfgFile, Name, Reason);
+}
+
+bool ClearPilotName(const fs::path& CfgFile, std::string& Reason) {
+    return StoreName(CfgFile, {}, Reason);
 }
 
 std::string IdentityPacket(const LauncherIdentity& Identity) {
