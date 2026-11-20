@@ -54,10 +54,12 @@ if (MR_BUILD_TESTS)
             test/test_servers.cpp
             test/test_mods.cpp
             test/test_channel.cpp
+            test/test_handshake.cpp
             src/MRIdentity.cpp
             src/MRServers.cpp
             src/MRMods.cpp
-            src/MRChannel.cpp)
+            src/MRChannel.cpp
+            src/MRHandshake.cpp)
     target_include_directories(MR-Launcher-tests PRIVATE "include")
     target_link_libraries(MR-Launcher-tests PRIVATE
             doctest::doctest nlohmann_json::nlohmann_json OpenSSL::Crypto)
