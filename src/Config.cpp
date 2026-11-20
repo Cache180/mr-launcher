@@ -58,7 +58,7 @@ void ConfigInit() {
     const fs::path CfgFile("MR-Launcher.cfg");
     const MR::LauncherIdentity Identity = MR::LoadOrCreateIdentity(CfgFile);
     if (Identity.Install.empty()) {
-        fatal("No se pudo generar la identidad de instalacion del launcher.");
+        fatal("No se pudo leer o guardar la identidad en MR-Launcher.cfg. Cierra cualquier programa que este usando ese archivo (antivirus, sincronizacion) y vuelve a abrir el launcher.");
     }
     if (!fs::exists(CfgFile)) {
         fatal("No se pudo escribir MR-Launcher.cfg en disco.");

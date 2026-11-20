@@ -6,6 +6,7 @@
 
 #include "MRIdentity.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -13,6 +14,7 @@
 #include <openssl/rand.h>
 #include <stdexcept>
 #include <system_error>
+#include <thread>
 #include <utility>
 
 namespace fs = std::filesystem;
@@ -47,27 +49,87 @@ namespace {
         return Port >= 1 && Port <= 65535;
     }
 
-    // Devuelve el contenido del cfg si es un objeto JSON; en cualquier otro caso
-    // (no existe, vacio, ilegible, binario, demasiado grande, no es objeto) un
-    // objeto vacio, que la reparacion completa con los valores por defecto.
-    Json ReadConfig(const fs::path& File) {
+    enum class ReadKind {
+        Missing, // el archivo no existe: se crea
+        Unreadable, // existe pero no se pudo leer ahora: NO se escribe nada
+        Content // se leyo entero (puede ser invalido)
+    };
+
+    struct ReadResult {
+        ReadKind Kind = ReadKind::Missing;
+        Json Doc = Json::object(); // solo con Valid
+        bool Valid = false; // objeto JSON bien formado
+        bool NonEmpty = false; // hay contenido que merece copia de seguridad
+    };
+
+    constexpr int ReadAttempts = 5;
+    constexpr std::chrono::milliseconds ReadRetryDelay { 50 };
+
+    ReadResult ReadOnce(const fs::path& File) {
+        ReadResult Result;
         std::error_code Ec;
+        const fs::file_status Status = fs::status(File, Ec);
+        if (Status.type() == fs::file_type::not_found) {
+            return Result; // Missing
+        }
+        Result.Kind = ReadKind::Unreadable;
+        if (Ec || Status.type() != fs::file_type::regular) {
+            return Result;
+        }
         const auto Size = fs::file_size(File, Ec);
-        if (Ec || Size == 0 || Size > MaxConfigBytes) {
-            return Json::object();
+        if (Ec) {
+            return Result;
+        }
+        if (Size == 0) {
+            Result.Kind = ReadKind::Content; // nada que conservar
+            return Result;
+        }
+        if (Size > MaxConfigBytes) {
+            Result.Kind = ReadKind::Content;
+            Result.NonEmpty = true;
+            return Result;
         }
         std::ifstream In(File, std::ios::binary);
         if (!In) {
-            return Json::object();
+            return Result;
         }
         std::string Buffer(static_cast<std::size_t>(Size), '\0');
         In.read(Buffer.data(), static_cast<std::streamsize>(Buffer.size()));
-        Buffer.resize(static_cast<std::size_t>(In.gcount()));
-        Json Doc = Json::parse(Buffer, nullptr, false);
-        if (Doc.is_discarded() || !Doc.is_object()) {
-            return Json::object();
+        if (static_cast<std::uintmax_t>(In.gcount()) != Size) {
+            return Result; // lectura corta: se reintenta
         }
-        return Doc;
+        Result.Kind = ReadKind::Content;
+        Result.NonEmpty = true;
+        Json Doc = Json::parse(Buffer, nullptr, false);
+        if (!Doc.is_discarded() && Doc.is_object()) {
+            Result.Doc = std::move(Doc);
+            Result.Valid = true;
+        }
+        return Result;
+    }
+
+    // Tres desenlaces (ver ReadKind). Unreadable se reintenta unas veces antes de rendirse.
+    ReadResult ReadConfig(const fs::path& File) {
+        ReadResult Result;
+        for (int Attempt = 0; Attempt < ReadAttempts; ++Attempt) {
+            if (Attempt > 0) {
+                std::this_thread::sleep_for(ReadRetryDelay);
+            }
+            Result = ReadOnce(File);
+            if (Result.Kind != ReadKind::Unreadable) {
+                break;
+            }
+        }
+        return Result;
+    }
+
+    // Copia el contenido viejo a <cfg>.corrupt (sobrescribe una copia anterior).
+    bool BackupCorrupt(const fs::path& File) {
+        std::error_code Ec;
+        fs::path Backup = File;
+        Backup += ".corrupt";
+        fs::copy_file(File, Backup, fs::copy_options::overwrite_existing, Ec);
+        return !Ec;
     }
 
     // Escritura atomica: archivo temporal junto al destino + renombrado. El
@@ -162,6 +224,33 @@ namespace {
         return Id;
     }
 
+    enum class Prepare {
+        Ok,
+        Unreadable, // el cfg existe pero no se pudo leer: no se escribio nada
+        BackupFailed, // no se pudo copiar el contenido viejo a .corrupt: no se escribio nada
+        NoKey // no hay clave de instalacion valida (RNG caido): no se escribio nada
+    };
+
+    // Lee y repara el cfg en memoria (Doc, Changed). Antes de descartar contenido
+    // que tenia algo que perder (ilegible como JSON, o sin Install valido) lo
+    // copia a <cfg>.corrupt. No escribe el cfg.
+    Prepare PrepareConfig(const fs::path& File, const detail::KeyGenerator& Generate, Json& Doc, bool& Changed) {
+        ReadResult Read = ReadConfig(File);
+        if (Read.Kind == ReadKind::Unreadable) {
+            return Prepare::Unreadable;
+        }
+        Doc = Read.Valid ? std::move(Read.Doc) : Json::object();
+        if (Read.NonEmpty && ExtractIdentity(Doc).Install.empty() && !BackupCorrupt(File)) {
+            return Prepare::BackupFailed;
+        }
+        try {
+            Changed = RepairConfig(Doc, Generate);
+        } catch (...) {
+            return Prepare::NoKey;
+        }
+        return Prepare::Ok;
+    }
+
 }
 
 bool IsValidPilotName(std::string_view Name) {
@@ -207,18 +296,21 @@ namespace detail {
 
     LauncherIdentity LoadOrCreateIdentityWith(const fs::path& CfgFile, const KeyGenerator& Generate) {
         try {
-            Json Doc = ReadConfig(CfgFile);
+            Json Doc = Json::object();
             bool Changed = false;
-            try {
-                Changed = RepairConfig(Doc, Generate);
-            } catch (...) {
-                // Sin clave valida: no se escribe nada y el llamador ve Install vacio.
-                return ExtractIdentity(Doc);
+            switch (PrepareConfig(CfgFile, Generate, Doc, Changed)) {
+            case Prepare::Ok:
+                break;
+            case Prepare::NoKey:
+                return ExtractIdentity(Doc); // Install vacio
+            case Prepare::Unreadable:
+            case Prepare::BackupFailed:
+                return {};
             }
-            if (Changed) {
-                // Si no se puede guardar, el llamador lo detecta porque el archivo no existe
-                // o no cambia; aqui no hay logger al que avisar.
-                WriteConfigAtomic(CfgFile, Doc);
+            // Nunca se devuelve una clave que no este en disco: si no se pudo
+            // guardar, Install vacio (ConfigInit lo trata como error fatal).
+            if (Changed && !WriteConfigAtomic(CfgFile, Doc)) {
+                return {};
             }
             return ExtractIdentity(Doc);
         } catch (...) {
@@ -238,8 +330,19 @@ bool SetPilotName(const fs::path& CfgFile, std::string_view Name, std::string& R
         return false;
     }
     try {
-        Json Doc = ReadConfig(CfgFile);
-        RepairConfig(Doc, GenerateInstallKey);
+        Json Doc = Json::object();
+        bool Changed = false;
+        switch (PrepareConfig(CfgFile, GenerateInstallKey, Doc, Changed)) {
+        case Prepare::Ok:
+            break;
+        case Prepare::Unreadable:
+            Reason = "no se pudo leer " + CfgFile.filename().string() + ": cierra lo que lo este usando y vuelve a intentarlo";
+            return false;
+        case Prepare::BackupFailed:
+        case Prepare::NoKey:
+            Reason = SaveReason;
+            return false;
+        }
         Doc["Name"] = std::string(Name);
         if (!WriteConfigAtomic(CfgFile, Doc)) {
             Reason = SaveReason;
