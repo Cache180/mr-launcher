@@ -5,6 +5,7 @@
 */
 
 
+#include "MRHandshake.h"
 #include "Network/network.hpp"
 #include <chrono>
 #include <iomanip>
@@ -66,45 +67,34 @@ void Abord() {
 }
 
 std::string Auth(SOCKET Sock) {
-    TCPSend("VC" + GetVer(), Sock);
-
-    auto Res = TCPRcv(Sock);
-
-    if (Res.empty() || Res[0] == 'E' || Res[0] == 'K') {
+    // Saludo MR: MR<version> -> A -> identidad -> P<id>. Los paquetes (en especial
+    // la identidad, que lleva la clave de instalacion) no se registran en ningun log.
+    const MR::LauncherIdentity Identity { Username, InstallKey };
+    const MR::HandshakeTransport Transport {
+        [Sock](const std::string& Data) {
+            TCPSend(Data, Sock);
+            return !Terminate;
+        },
+        [Sock]() { return TCPRcv(Sock); },
+    };
+    const MR::HandshakeResult Handshake = MR::PerformHandshake(Identity, GetVer(), Transport);
+    if (!Handshake.Ok) {
         Abord();
         CoreSend("L");
+        if (!Handshake.Failure.empty()) {
+            UUl(Handshake.Failure);
+        }
         return "";
     }
+    ClientID = Handshake.ClientId;
 
-    TCPSend(PublicKey, Sock);
-    if (Terminate) {
-        CoreSend("L");
-        return "";
-    }
-
-    Res = TCPRcv(Sock);
-    if (Res.empty() || Res[0] != 'P') {
-        Abord();
-        CoreSend("L");
-        return "";
-    }
-
-    Res = Res.substr(1);
-    if (Res.find_first_not_of("0123456789") == std::string::npos) {
-        ClientID = std::stoi(Res);
-    } else {
-        Abord();
-        CoreSend("L");
-        UUl("Authentication failed!");
-        return "";
-    }
     TCPSend("SR", Sock);
     if (Terminate) {
         CoreSend("L");
         return "";
     }
 
-    Res = TCPRcv(Sock);
+    std::string Res = TCPRcv(Sock);
 
     if (Res[0] == 'E' || Res[0] == 'K') {
         Abord();

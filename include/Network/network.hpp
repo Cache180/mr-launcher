@@ -36,7 +36,7 @@ extern bool TCPTerminate;
 extern std::string LastIP;
 extern std::string MStatus;
 extern std::string UlStatus;
-extern std::string PublicKey;
+extern std::string InstallKey;
 extern std::string Username;
 extern const std::filesystem::path ConfigFile;
 extern nlohmann::json ConfiguredServers;

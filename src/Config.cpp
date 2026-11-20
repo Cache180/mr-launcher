@@ -18,6 +18,8 @@ namespace fs = std::filesystem;
 
 const fs::path ConfigFile("MR-Launcher.cfg");
 std::string Username;
+// Credencial: nunca se registra ni se imprime. Solo la lee Auth() para armar la identidad.
+std::string InstallKey;
 nlohmann::json ConfiguredServers = nlohmann::json::array();
 std::filesystem::path CachingDirectory = std::filesystem::path("./Resources");
 bool deleteDuplicateMods = false;
@@ -89,5 +91,6 @@ void ConfigInit() {
         fatal("MR-Launcher.cfg no es un JSON valido.");
     }
     Username = Identity.Name;
+    InstallKey = Identity.Install;
     ParseConfig(d);
 }

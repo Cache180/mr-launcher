@@ -5,6 +5,8 @@
 */
 
 #include "MRChannel.h"
+#include "MRHandshake.h"
+#include "MRIdentity.h"
 #include "MRServers.h"
 #include "Network/network.hpp"
 #include "Security/Init.h"
@@ -39,9 +41,6 @@ extern int TraceBack;
 std::set<std::string>* ConfList = nullptr;
 bool TCPTerminate = false;
 bool Terminate = false;
-// Lo que Auth() envia al server como clave publica. Ya no hay login contra BeamMP,
-// asi que siempre va vacia; el handshake lo reemplaza la tarea de identidad del server.
-std::string PublicKey;
 std::string UlStatus;
 std::string MStatus;
 bool ModLoaded;
@@ -68,6 +67,14 @@ bool SecurityWarning() {
 }
 
 void StartSync(const std::string& Data) {
+    // Sin nombre de piloto valido no se abre la conexion: el juego recibe el aviso por
+    // el canal de estado y vuelve a la lista de servidores.
+    if (!MR::IsValidPilotName(Username)) {
+        UUl(MR::NoPilotNameMessage);
+        Terminate = true;
+        CoreSend("L");
+        return;
+    }
     std::string IP = GetAddr(Data.substr(1, Data.find(':') - 1));
     if (IP.find('.') == -1) {
         if (IP == "DNS")
