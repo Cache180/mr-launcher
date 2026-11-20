@@ -21,8 +21,8 @@ namespace fs = std::filesystem;
 
 namespace MR {
 
-fs::path ConfigPath(const fs::path& /*ExeDir*/) {
-    return fs::path(ConfigFileName);
+fs::path ConfigPath(const fs::path& ExeDir) {
+    return ExeDir / ConfigFileName;
 }
 
 namespace {

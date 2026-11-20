@@ -38,7 +38,7 @@ extern std::string MStatus;
 extern std::string UlStatus;
 extern std::string InstallKey;
 extern std::string Username;
-extern const std::filesystem::path ConfigFile;
+extern std::filesystem::path ConfigFile;
 extern nlohmann::json ConfiguredServers;
 extern std::string magic;
 int KillSocket(uint64_t Dead);

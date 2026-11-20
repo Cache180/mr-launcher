@@ -9,6 +9,7 @@
 #include "MRIdentity.h"
 #include "MRServers.h"
 #include "Options.h"
+#include "Startup.h"
 #include "Utils.h"
 #include <cstdint>
 #include <filesystem>
@@ -16,7 +17,8 @@
 #include <nlohmann/json.hpp>
 namespace fs = std::filesystem;
 
-const fs::path ConfigFile("MR-Launcher.cfg");
+// Junto al ejecutable (no al directorio de trabajo): se fija en ConfigInit.
+fs::path ConfigFile;
 std::string Username;
 // Credencial: nunca se registra ni se imprime. Solo la lee Auth() para armar la identidad.
 std::string InstallKey;
@@ -69,18 +71,19 @@ void ParseConfig(const nlohmann::json& d) {
 }
 
 void ConfigInit() {
+    ConfigFile = MR::ConfigPath(GetBP());
     // Un solo escritor: MR::LoadOrCreateIdentity crea o repara MR-Launcher.cfg
     // (Port, Build, Name, Install, Servers...). Aqui solo se lee.
     const MR::LauncherIdentity Identity = MR::LoadOrCreateIdentity(ConfigFile);
     if (Identity.Install.empty()) {
-        fatal("No se pudo leer o guardar la identidad en MR-Launcher.cfg. Cierra cualquier programa que este usando ese archivo (antivirus, sincronizacion) y vuelve a abrir el launcher.");
+        fatal("No se pudo leer o guardar la identidad en " + ConfigFile.string() + ". Cierra cualquier programa que este usando ese archivo (antivirus, sincronizacion) y vuelve a abrir el launcher.");
     }
     if (!fs::exists(ConfigFile)) {
-        fatal("No se pudo escribir MR-Launcher.cfg en disco.");
+        fatal("No se pudo escribir " + ConfigFile.string() + " en disco.");
     }
     std::ifstream cfg(ConfigFile, std::ios::binary);
     if (!cfg.is_open()) {
-        fatal("No se pudo abrir MR-Launcher.cfg.");
+        fatal("No se pudo abrir " + ConfigFile.string() + ".");
     }
     auto Size = fs::file_size(ConfigFile);
     std::string Buffer(Size, 0);
@@ -88,7 +91,7 @@ void ConfigInit() {
     cfg.close();
     nlohmann::json d = nlohmann::json::parse(Buffer, nullptr, false);
     if (d.is_discarded() || !d.is_object()) {
-        fatal("MR-Launcher.cfg no es un JSON valido.");
+        fatal(ConfigFile.string() + " no es un JSON valido.");
     }
     Username = Identity.Name;
     InstallKey = Identity.Install;
