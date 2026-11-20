@@ -6,6 +6,7 @@
 
 #include "Logger.h"
 #include "Network/network.hpp"
+#include "MRIdentity.h"
 #include "Options.h"
 #include "Utils.h"
 #include <cstdint>
@@ -19,7 +20,7 @@ std::filesystem::path CachingDirectory = std::filesystem::path("./Resources");
 bool deleteDuplicateMods = false;
 
 void ParseConfig(const nlohmann::json& d) {
-    if (d["Port"].is_number()) {
+    if (d.contains("Port") && d["Port"].is_number()) {
         options.port = d["Port"].get<int>();
     }
     // Default -1
@@ -27,7 +28,7 @@ void ParseConfig(const nlohmann::json& d) {
     // EA 2
     // Dev 3
     // Custom 3
-    if (d["Build"].is_string()) {
+    if (d.contains("Build") && d["Build"].is_string()) {
         Branch = d["Build"].get<std::string>();
         for (char& c : Branch)
             c = char(tolower(c));
@@ -52,32 +53,27 @@ void ParseConfig(const nlohmann::json& d) {
 }
 
 void ConfigInit() {
-    if (fs::exists("Launcher.cfg")) {
-        std::ifstream cfg("Launcher.cfg");
-        if (cfg.is_open()) {
-            auto Size = fs::file_size("Launcher.cfg");
-            std::string Buffer(Size, 0);
-            cfg.read(&Buffer[0], Size);
-            cfg.close();
-            nlohmann::json d = nlohmann::json::parse(Buffer, nullptr, false);
-            if (d.is_discarded()) {
-                fatal("Config failed to parse make sure it's valid JSON!");
-            }
-            ParseConfig(d);
-        } else
-            fatal("Failed to open Launcher.cfg!");
-    } else {
-        std::ofstream cfg("Launcher.cfg");
-        if (cfg.is_open()) {
-            cfg <<
-                R"({
-    "Port": 4444,
-    "Build": "Default",
-    "CachingDirectory": "./Resources"
-})";
-            cfg.close();
-        } else {
-            fatal("Failed to write config on disk!");
-        }
+    // Un solo escritor: MR::LoadOrCreateIdentity crea o repara MR-Launcher.cfg
+    // (Port, Build, Name, Install, Servers...). Aqui solo se lee.
+    const fs::path CfgFile("MR-Launcher.cfg");
+    const MR::LauncherIdentity Identity = MR::LoadOrCreateIdentity(CfgFile);
+    if (Identity.Install.empty()) {
+        fatal("No se pudo generar la identidad de instalacion del launcher.");
     }
+    if (!fs::exists(CfgFile)) {
+        fatal("No se pudo escribir MR-Launcher.cfg en disco.");
+    }
+    std::ifstream cfg(CfgFile, std::ios::binary);
+    if (!cfg.is_open()) {
+        fatal("No se pudo abrir MR-Launcher.cfg.");
+    }
+    auto Size = fs::file_size(CfgFile);
+    std::string Buffer(Size, 0);
+    cfg.read(&Buffer[0], Size);
+    cfg.close();
+    nlohmann::json d = nlohmann::json::parse(Buffer, nullptr, false);
+    if (d.is_discarded() || !d.is_object()) {
+        fatal("MR-Launcher.cfg no es un JSON valido.");
+    }
+    ParseConfig(d);
 }

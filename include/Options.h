@@ -14,7 +14,7 @@ struct Options {
 #elif defined(__linux__)
     std::string executable_name = "BeamMP-Launcher";
 #endif
-    unsigned int port = 4444;
+    unsigned int port = 4464;
     bool verbose = false;
     bool no_download = false;
     bool no_update = false;
