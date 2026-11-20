@@ -17,6 +17,11 @@
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 #include <string>
 
 namespace fs = std::filesystem;
@@ -304,5 +309,164 @@ TEST_CASE("RNG caido: nunca se inventa una clave") {
         MR::LauncherIdentity Id = MR::detail::LoadOrCreateIdentityWith(Dir.Cfg(), Failing);
         CHECK(Id.Install.empty());
         CHECK(ReadAll(Dir.Cfg()) == "{");
+    }
+}
+
+// ---- Revision 1: lectura transitoria, copia .corrupt y fallos de escritura ----
+
+namespace {
+
+fs::path CorruptOf(const fs::path& Cfg) {
+    return fs::path(Cfg.string() + ".corrupt");
+}
+
+#ifdef _WIN32
+// Mantiene el archivo abierto sin compartir (solo Windows: CreateFileW con
+// dwShareMode = 0), lo que reproduce una violacion de uso compartido
+// (antivirus, sincronizador) para cualquier otro proceso o handle.
+class ExclusiveLock {
+public:
+    explicit ExclusiveLock(const fs::path& File)
+        : mHandle(CreateFileW(File.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)) { }
+    ~ExclusiveLock() { Release(); }
+    ExclusiveLock(const ExclusiveLock&) = delete;
+    ExclusiveLock& operator=(const ExclusiveLock&) = delete;
+    bool Held() const { return mHandle != INVALID_HANDLE_VALUE; }
+    void Release() {
+        if (mHandle != INVALID_HANDLE_VALUE) {
+            CloseHandle(mHandle);
+            mHandle = INVALID_HANDLE_VALUE;
+        }
+    }
+
+private:
+    HANDLE mHandle;
+};
+#endif
+
+} // namespace
+
+#ifdef _WIN32
+TEST_CASE("archivo valido bloqueado: no se rota la clave ni se toca el archivo") {
+    TempDir Dir;
+    const std::string Original = R"({"Port":4464,"Build":"Default","Name":"Piloto_1","Install":")" + ValidInstall + R"("})";
+    WriteAll(Dir.Cfg(), Original);
+
+    SUBCASE("LoadOrCreateIdentity") {
+        {
+            ExclusiveLock Lock(Dir.Cfg());
+            REQUIRE(Lock.Held());
+            MR::LauncherIdentity Id;
+            REQUIRE_NOTHROW(Id = MR::LoadOrCreateIdentity(Dir.Cfg()));
+            CHECK(Id.Install.empty());
+        }
+        CHECK(ReadAll(Dir.Cfg()) == Original);
+        CHECK_FALSE(fs::exists(CorruptOf(Dir.Cfg())));
+        CHECK(MR::LoadOrCreateIdentity(Dir.Cfg()).Install == ValidInstall);
+    }
+    SUBCASE("SetPilotName") {
+        {
+            ExclusiveLock Lock(Dir.Cfg());
+            REQUIRE(Lock.Held());
+            std::string Reason;
+            CHECK_FALSE(MR::SetPilotName(Dir.Cfg(), "Otro_Nombre", Reason));
+            CHECK_FALSE(Reason.empty());
+            CHECK(Reason.find(ValidInstall) == std::string::npos);
+        }
+        CHECK(ReadAll(Dir.Cfg()) == Original);
+        CHECK(MR::LoadOrCreateIdentity(Dir.Cfg()).Name == "Piloto_1");
+    }
+}
+#endif
+
+TEST_CASE("cfg corrupto no vacio: se repara y el contenido viejo queda en .corrupt") {
+    static const char Binary[] = "\x00\xFF\xFE\x80\x01\x02" "garbage\xC3\x28";
+    const std::string Cases[] = {
+        "{",
+        "[1,2,3]",
+        std::string(Binary, sizeof(Binary) - 1),
+        R"({"Name":"Piloto_1","Install":"corta","Extra":1})", // JSON valido pero sin Install valido
+        std::string(1024 * 1024 + 1, 'x'),                     // mas de 1 MiB
+    };
+    for (const std::string& Old : Cases) {
+        TempDir Dir;
+        WriteAll(Dir.Cfg(), Old);
+        MR::LauncherIdentity Id = MR::LoadOrCreateIdentity(Dir.Cfg());
+        CHECK(IsHex48(Id.Install));
+        CheckValidCfg(Dir.Cfg());
+        REQUIRE(fs::exists(CorruptOf(Dir.Cfg())));
+        CHECK(ReadAll(CorruptOf(Dir.Cfg())) == Old);
+    }
+}
+
+TEST_CASE("cfg corrupto: una copia .corrupt anterior se sobrescribe") {
+    TempDir Dir;
+    WriteAll(CorruptOf(Dir.Cfg()), "copia vieja");
+    WriteAll(Dir.Cfg(), "{roto");
+    MR::LoadOrCreateIdentity(Dir.Cfg());
+    CHECK(ReadAll(CorruptOf(Dir.Cfg())) == "{roto");
+}
+
+TEST_CASE("sin copia .corrupt cuando no hay nada que perder") {
+    SUBCASE("archivo inexistente") {
+        TempDir Dir;
+        MR::LoadOrCreateIdentity(Dir.Cfg());
+        CHECK_FALSE(fs::exists(CorruptOf(Dir.Cfg())));
+    }
+    SUBCASE("archivo de longitud cero") {
+        TempDir Dir;
+        WriteAll(Dir.Cfg(), "");
+        CHECK(IsHex48(MR::LoadOrCreateIdentity(Dir.Cfg()).Install));
+        CHECK_FALSE(fs::exists(CorruptOf(Dir.Cfg())));
+    }
+    SUBCASE("Install valido con otras claves invalidas") {
+        TempDir Dir;
+        WriteAll(Dir.Cfg(), R"({"Port":"texto","Name":"a b","Install":")" + ValidInstall + R"("})");
+        CHECK(MR::LoadOrCreateIdentity(Dir.Cfg()).Install == ValidInstall);
+        CHECK_FALSE(fs::exists(CorruptOf(Dir.Cfg())));
+    }
+}
+
+TEST_CASE("si la copia .corrupt falla no se sobrescribe nada") {
+    TempDir Dir;
+    WriteAll(Dir.Cfg(), "{");
+    fs::create_directory(CorruptOf(Dir.Cfg())); // un directorio ocupa el destino de la copia
+    MR::LauncherIdentity Id;
+    REQUIRE_NOTHROW(Id = MR::LoadOrCreateIdentity(Dir.Cfg()));
+    CHECK(Id.Install.empty());
+    CHECK(ReadAll(Dir.Cfg()) == "{");
+    std::string Reason;
+    CHECK_FALSE(MR::SetPilotName(Dir.Cfg(), "Piloto_1", Reason));
+    CHECK(ReadAll(Dir.Cfg()) == "{");
+}
+
+TEST_CASE("fallo de escritura: Install vacio, SetPilotName falso, sin restos a medias") {
+    SUBCASE("archivo inexistente y un directorio ocupa el temporal") {
+        TempDir Dir;
+        fs::create_directory(Dir.Tmp());
+        MR::LauncherIdentity Id = MR::LoadOrCreateIdentity(Dir.Cfg());
+        CHECK(Id.Install.empty());
+        CHECK_FALSE(fs::exists(Dir.Cfg()));
+    }
+    SUBCASE("cfg valido pero incompleto y un directorio ocupa el temporal") {
+        TempDir Dir;
+        const std::string Old = R"({"Install":")" + ValidInstall + R"("})";
+        WriteAll(Dir.Cfg(), Old);
+        fs::create_directory(Dir.Tmp());
+        CHECK(MR::LoadOrCreateIdentity(Dir.Cfg()).Install.empty()); // nunca una clave que no esta en disco
+        CHECK(ReadAll(Dir.Cfg()) == Old);
+        std::string Reason;
+        CHECK_FALSE(MR::SetPilotName(Dir.Cfg(), "Piloto_1", Reason));
+        CHECK_FALSE(Reason.empty());
+        CHECK(ReadAll(Dir.Cfg()) == Old);
+    }
+    SUBCASE("un directorio ocupa la ruta del cfg") {
+        TempDir Dir;
+        fs::create_directory(Dir.Cfg());
+        CHECK(MR::LoadOrCreateIdentity(Dir.Cfg()).Install.empty());
+        std::string Reason;
+        CHECK_FALSE(MR::SetPilotName(Dir.Cfg(), "Piloto_1", Reason));
+        CHECK(fs::is_directory(Dir.Cfg()));
+        CHECK_FALSE(fs::exists(Dir.Tmp()));
     }
 }
