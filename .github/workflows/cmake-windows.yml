@@ -7,23 +7,20 @@ env:
 
 jobs:
   fetch-mod:
-    # MRMP.zip sale del ultimo package.yml verde de Cache180/mr-mp (repo publico).
+    # MRMP.zip sale de la pre-release rodante ci-latest de Cache180/mr-mp (la publica
+    # package.yml en cada push verde). El token por defecto no puede leer artefactos
+    # de otro repositorio, asi que se baja por URL publica y se verifica el sha256.
     runs-on: ubuntu-latest
     steps:
-      - name: Download MRMP.zip from the latest green package.yml run of mr-mp
+      - name: Download MRMP.zip and verify its sha256
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          run_id=$(gh run list --repo Cache180/mr-mp --workflow package.yml --branch mr-main --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
-            echo "no hay ninguna ejecucion verde de package.yml en Cache180/mr-mp" >&2
-            exit 1
-          fi
-          echo "mr-mp package.yml run: $run_id"
-          gh run download "$run_id" --repo Cache180/mr-mp --name MRMP --dir mrmp
+          base=https://github.com/Cache180/mr-mp/releases/download/ci-latest
+          mkdir mrmp
           cd mrmp
+          curl --fail --silent --show-error --location --retry 3 -o MRMP.zip "$base/MRMP.zip"
+          curl --fail --silent --show-error --location --retry 3 -o MRMP.zip.sha256 "$base/MRMP.zip.sha256"
           sha256sum -c MRMP.zip.sha256
           ls -l
 
