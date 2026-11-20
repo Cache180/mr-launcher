@@ -47,6 +47,9 @@ if (MR_BUILD_TESTS)
     add_executable(MR-Launcher-tests
             test/test_main.cpp
             test/test_identity.cpp
+            test/test_servers.cpp
+            test/test_mods.cpp
+            test/test_channel.cpp
             src/MRIdentity.cpp)
     target_include_directories(MR-Launcher-tests PRIVATE "include")
     target_link_libraries(MR-Launcher-tests PRIVATE

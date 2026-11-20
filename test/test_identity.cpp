@@ -5,17 +5,12 @@
 */
 
 #include "MRIdentity.h"
+#include "test_support.h"
 
 #include <doctest/doctest.h>
 #include <nlohmann/json.hpp>
 
-#include <atomic>
-#include <chrono>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
-#include <random>
-#include <sstream>
 #include <stdexcept>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -28,42 +23,11 @@ namespace fs = std::filesystem;
 
 namespace {
 
+using mrtest::ReadAll;
+using mrtest::TempDir;
+using mrtest::WriteAll;
+
 constexpr const char* NameReason = "nombre invalido (3-20 caracteres: letras, numeros, _ . -)";
-
-// Directorio temporal unico, borrado al salir del alcance.
-class TempDir {
-public:
-    TempDir() {
-        static std::atomic<unsigned> Counter { 0 };
-        std::ostringstream Id;
-        Id << "mr-launcher-test-" << std::random_device {}() << '-'
-           << std::chrono::steady_clock::now().time_since_epoch().count() << '-' << Counter++;
-        mPath = fs::temp_directory_path() / Id.str();
-        fs::create_directories(mPath);
-    }
-    ~TempDir() {
-        std::error_code Ec;
-        fs::remove_all(mPath, Ec);
-    }
-    TempDir(const TempDir&) = delete;
-    TempDir& operator=(const TempDir&) = delete;
-
-    fs::path Cfg() const { return mPath / "MR-Launcher.cfg"; }
-    fs::path Tmp() const { return mPath / "MR-Launcher.cfg.tmp"; }
-
-private:
-    fs::path mPath;
-};
-
-void WriteAll(const fs::path& File, const std::string& Content) {
-    std::ofstream Out(File, std::ios::binary | std::ios::trunc);
-    Out.write(Content.data(), static_cast<std::streamsize>(Content.size()));
-}
-
-std::string ReadAll(const fs::path& File) {
-    std::ifstream In(File, std::ios::binary);
-    return std::string(std::istreambuf_iterator<char>(In), std::istreambuf_iterator<char>());
-}
 
 nlohmann::json ReadJson(const fs::path& File) {
     return nlohmann::json::parse(ReadAll(File), nullptr, false);
@@ -469,4 +433,39 @@ TEST_CASE("fallo de escritura: Install vacio, SetPilotName falso, sin restos a m
         CHECK(fs::is_directory(Dir.Cfg()));
         CHECK_FALSE(fs::exists(Dir.Tmp()));
     }
+}
+
+TEST_CASE("MR::ClearPilotName: borra el nombre y conserva el resto del cfg") {
+    TempDir Dir;
+    WriteAll(Dir.Cfg(), R"({"Install":")" + ValidInstall + R"(","Name":"Piloto_1","Port":4470,"Servers":[{"name":"MR","ip":"1.2.3.4","port":4464}]})");
+    std::string Reason = "previo";
+    REQUIRE(MR::ClearPilotName(Dir.Cfg(), Reason));
+    CHECK(Reason.empty());
+    CheckValidCfg(Dir.Cfg());
+    nlohmann::json D = ReadJson(Dir.Cfg());
+    CHECK(D["Name"] == "");
+    CHECK(D["Install"] == ValidInstall);
+    CHECK(D["Port"] == 4470);
+    REQUIRE(D["Servers"].size() == 1);
+    CHECK(D["Servers"][0]["ip"] == "1.2.3.4");
+    CHECK(MR::LoadOrCreateIdentity(Dir.Cfg()).Name.empty());
+}
+
+TEST_CASE("MR::ClearPilotName: sin cfg previo lo crea valido y sin nombre") {
+    TempDir Dir;
+    std::string Reason;
+    REQUIRE(MR::ClearPilotName(Dir.Cfg(), Reason));
+    CheckValidCfg(Dir.Cfg());
+    CHECK(ReadJson(Dir.Cfg())["Name"] == "");
+}
+
+TEST_CASE("MR::ClearPilotName: fallo de escritura devuelve falso con motivo y no toca el cfg") {
+    TempDir Dir;
+    const std::string Old = R"({"Install":")" + ValidInstall + R"(","Name":"Piloto_1"})";
+    WriteAll(Dir.Cfg(), Old);
+    fs::create_directory(Dir.Tmp());
+    std::string Reason;
+    CHECK_FALSE(MR::ClearPilotName(Dir.Cfg(), Reason));
+    CHECK_FALSE(Reason.empty());
+    CHECK(ReadAll(Dir.Cfg()) == Old);
 }
