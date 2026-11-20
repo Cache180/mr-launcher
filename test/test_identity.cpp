@@ -469,3 +469,24 @@ TEST_CASE("MR::ClearPilotName: fallo de escritura devuelve falso con motivo y no
     CHECK_FALSE(Reason.empty());
     CHECK(ReadAll(Dir.Cfg()) == Old);
 }
+
+TEST_CASE("MR::ConfigPath: el cfg queda junto al ejecutable") {
+    TempDir Dir;
+    const fs::path Cfg = MR::ConfigPath(Dir.Path());
+    CHECK(Cfg.filename() == "MR-Launcher.cfg");
+    CHECK(Cfg.parent_path() == Dir.Path());
+    CHECK(Cfg == Dir.Cfg());
+}
+
+TEST_CASE("MR::ConfigPath: no depende del directorio de trabajo") {
+    TempDir Exe;
+    TempDir Elsewhere;
+    const fs::path Before = fs::current_path();
+    const fs::path FromHere = MR::ConfigPath(Exe.Path());
+    fs::current_path(Elsewhere.Path());
+    const fs::path FromThere = MR::ConfigPath(Exe.Path());
+    fs::current_path(Before);
+    CHECK(FromHere == FromThere);
+    CHECK(FromThere.is_absolute());
+    CHECK(FromThere.parent_path() == Exe.Path());
+}

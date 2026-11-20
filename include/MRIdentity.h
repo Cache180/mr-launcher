@@ -26,6 +26,15 @@ struct LauncherIdentity {
     std::string Install;
 };
 
+// Nombre del archivo de configuracion. Vive junto al ejecutable, nunca en el
+// directorio de trabajo: arrancar el launcher desde otra carpeta no puede crear
+// una segunda identidad.
+constexpr const char* ConfigFileName = "MR-Launcher.cfg";
+
+// Ruta del cfg para un launcher cuyo ejecutable esta en ExeDir. No consulta el
+// directorio de trabajo.
+std::filesystem::path ConfigPath(const std::filesystem::path& ExeDir);
+
 // 3-20 caracteres, solo [A-Za-z0-9_.-] (ASCII; mismo criterio que el server).
 bool IsValidPilotName(std::string_view Name);
 
