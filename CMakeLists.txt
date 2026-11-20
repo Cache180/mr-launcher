@@ -38,3 +38,20 @@ else(WIN32) #MINGW
     target_link_libraries(${PROJECT_NAME} ssl crypto ws2_32 ssp crypt32 z CURL::libcurl)
 endif(WIN32)
 target_include_directories(${PROJECT_NAME} PRIVATE "include")
+
+# Pruebas unitarias del modulo de identidad (solo fuentes puras: no se enlaza el launcher).
+option(MR_BUILD_TESTS "Compilar MR-Launcher-tests" ON)
+if (MR_BUILD_TESTS)
+    find_package(doctest CONFIG REQUIRED)
+    find_package(OpenSSL REQUIRED)
+    add_executable(MR-Launcher-tests
+            test/test_main.cpp
+            test/test_identity.cpp
+            src/MRIdentity.cpp)
+    target_include_directories(MR-Launcher-tests PRIVATE "include")
+    target_link_libraries(MR-Launcher-tests PRIVATE
+            doctest::doctest nlohmann_json::nlohmann_json OpenSSL::Crypto)
+    if (WIN32)
+        target_link_libraries(MR-Launcher-tests PRIVATE ws2_32 crypt32)
+    endif()
+endif()
