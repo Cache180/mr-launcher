@@ -29,6 +29,23 @@ namespace {
         return Text.substr(0, Prefix.size()) == Prefix;
     }
 
+    // Un navegador trata %2e como '.', %2f como '/' y %5c como '\' al resolver la
+    // ruta: con ellos se saldria de la carpeta permitida (p. ej. %2e%2e). Se
+    // rechazan, sin distinguir mayusculas, en lugar de decodificar.
+    bool HasEncodedPathTricks(std::string_view Link) {
+        for (std::size_t I = 0; I + 2 < Link.size(); ++I) {
+            if (Link[I] != '%') {
+                continue;
+            }
+            const char Hi = Link[I + 1];
+            const char Lo = static_cast<char>(Link[I + 2] | 0x20); // minuscula ASCII
+            if ((Hi == '2' && (Lo == 'e' || Lo == 'f')) || (Hi == '5' && Lo == 'c')) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // "N" + JSON.
     std::string Packet(const Json& Body) {
         return "N" + Body.dump(-1, ' ', false, Json::error_handler_t::replace);
@@ -91,7 +108,7 @@ namespace {
 }
 
 bool IsAllowedLink(std::string_view Link) {
-    if (Link.empty() || Link.size() > MaxLinkLength || Link.find("..") != std::string_view::npos) {
+    if (Link.empty() || Link.size() > MaxLinkLength || Link.find("..") != std::string_view::npos || HasEncodedPathTricks(Link)) {
         return false;
     }
     for (char C : Link) {
