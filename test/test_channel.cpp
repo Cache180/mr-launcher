@@ -104,9 +104,9 @@ TEST_CASE("MR::HandleIdentityMessage: N:{name} valido guarda el nombre y respond
 TEST_CASE("MR::HandleIdentityMessage: N:{name} acepta claves de mas y espacios en el JSON") {
     TempDir Dir;
     std::string Active;
-    const std::string Reply = MR::HandleIdentityMessage(R"(N:{ "password":"x", "name" : "Cache.211" })", Dir.Cfg(), Active);
-    CHECK(Reply == R"(N{"success":true,"message":"Listo","username":"Cache.211","role":"USER","id":0})");
-    CHECK(Active == "Cache.211");
+    const std::string Reply = MR::HandleIdentityMessage(R"(N:{ "password":"x", "name" : "Piloto.9" })", Dir.Cfg(), Active);
+    CHECK(Reply == R"(N{"success":true,"message":"Listo","username":"Piloto.9","role":"USER","id":0})");
+    CHECK(Active == "Piloto.9");
 }
 
 TEST_CASE("MR::HandleIdentityMessage: nombre invalido responde success false y no cambia nada") {

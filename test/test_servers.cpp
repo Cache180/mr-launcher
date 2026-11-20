@@ -29,7 +29,7 @@ const char* SampleInfo = R"({
     "players":"2","maxplayers":"20","port":"9999","map":"/levels/gridmap_v2/info.json",
     "private":"false","version":"1.0.0","clientversion":"1.0.0","name":"MR Server Carreras",
     "tags":"Racing","guests":"false","modlist":"/Resources/Client/a.zip;","modstotalsize":"1048576",
-    "modstotal":"1","playerslist":"Jesus;Cache;","desc":"Carreras de los viernes"
+    "modstotal":"1","playerslist":"PilotoA;PilotoB;","desc":"Carreras de los viernes"
 })";
 
 const std::set<std::string> EntryKeys = { "ip", "port", "sname", "sdesc", "map", "players", "maxplayers",
@@ -83,7 +83,7 @@ TEST_CASE("MR::BuildServerEntry: con la respuesta I completa trae todas las clav
     CHECK(Entry["map"] == "/levels/gridmap_v2/info.json");
     CHECK(Entry["players"] == "2");
     CHECK(Entry["maxplayers"] == "20");
-    CHECK(Entry["playerslist"] == "Jesus;Cache;");
+    CHECK(Entry["playerslist"] == "PilotoA;PilotoB;");
     CHECK(Entry["modlist"] == "/Resources/Client/a.zip;");
     CHECK(Entry["modstotal"] == "1");
     CHECK(Entry["modstotalsize"] == "1048576");
