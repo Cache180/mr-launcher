@@ -173,3 +173,20 @@ TEST_CASE("MR::HandleIdentityMessage: mensajes que no son del canal de identidad
     }
     CHECK(Active == "Piloto_1");
 }
+
+TEST_CASE("MR::IsAllowedLink: segmentos punto y separadores codificados con porcentaje se rechazan") {
+    for (const char* Base : { "https://github.com/Cache180/", "https://muertazosracing.com/", "https://discord.gg/" }) {
+        for (const char* Tail : { "%2e%2e/evil/repo", ".%2e/evil", "%2E./evil", "%2E%2E%2Fevil", "%2e%2e%5cevil",
+                 "%2e%2e%5Cevil", "a%2fb", "a%2Fb", "a%5cb", "x/%2e%2e" }) {
+            const std::string Link = std::string(Base) + Tail;
+            CAPTURE(Link);
+            CHECK_FALSE(MR::IsAllowedLink(Link));
+        }
+    }
+}
+
+TEST_CASE("MR::IsAllowedLink: un escape de porcentaje inofensivo sigue aceptandose") {
+    CHECK(MR::IsAllowedLink("https://muertazosracing.com/launcher?x=%20"));
+    CHECK(MR::IsAllowedLink("https://github.com/Cache180/mr-launcher/releases/tag/v1%2E0") == false); // %2E tambien se rechaza
+    CHECK(MR::IsAllowedLink("https://github.com/Cache180/mr%20launcher"));
+}
