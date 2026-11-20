@@ -5,6 +5,7 @@
 */
 
 #pragma once
+#include "Utils.h"
 #include <string>
 void PreGame(const beammp_fs_string& GamePath);
 std::string CheckVer(const std::filesystem::path& path);

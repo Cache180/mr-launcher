@@ -96,7 +96,7 @@ bool IsAllowedLink(std::string_view Link) {
     }
     for (char C : Link) {
         const auto Byte = static_cast<unsigned char>(C);
-        if (Byte <= 0x20 || Byte == 0x7F || C == '\') {
+        if (Byte <= 0x20 || Byte == 0x7F || C == '\\') {
             return false;
         }
     }
