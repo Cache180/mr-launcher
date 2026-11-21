@@ -308,3 +308,59 @@ TEST_CASE("MR::TruncateServerField: no parte una secuencia UTF-8 y cuenta caract
     CHECK(MR::TruncateServerField("abc", 3) == "abc");
     CHECK(MR::TruncateServerField("abcd", 3) == "abc");
 }
+
+TEST_CASE("MR::MaxServerListChars: 4096") {
+    CHECK(MR::MaxServerListChars == 4096);
+}
+
+TEST_CASE("MR::BuildServerEntry: los textos tipo lista se recortan a 4096") {
+    const std::string Long(100000, 'm');
+    json Info = { { "playerslist", Long }, { "modlist", Long }, { "tags", Long }, { "clientversion", Long } };
+    json Entry = MR::BuildServerEntry(CfgEntry(), Info.dump());
+    CHECK(Entry["playerslist"].get<std::string>() == std::string(4096, 'm'));
+    CHECK(Entry["modlist"].get<std::string>() == std::string(4096, 'm'));
+    CHECK(Entry["tags"].get<std::string>() == std::string(4096, 'm'));
+    CHECK(Entry["cversion"].get<std::string>() == std::string(4096, 'm'));
+}
+
+TEST_CASE("MR::SanitizeServerInfo: name, map, desc y version a 256; el resto intacto") {
+    const std::string Long(10000, 'x');
+    json Info = { { "name", Long }, { "map", Long }, { "desc", Long }, { "version", Long }, { "players", "2" }, { "private", "false" } };
+    const json Out = json::parse(MR::SanitizeServerInfo(Info.dump()));
+    CHECK(Out["name"].get<std::string>() == std::string(256, 'x'));
+    CHECK(Out["map"].get<std::string>() == std::string(256, 'x'));
+    CHECK(Out["desc"].get<std::string>() == std::string(256, 'x'));
+    CHECK(Out["version"].get<std::string>() == std::string(256, 'x'));
+    CHECK(Out["players"] == "2");
+    CHECK(Out["private"] == "false");
+}
+
+TEST_CASE("MR::SanitizeServerInfo: playerslist, modlist, tags y clientversion a 4096") {
+    const std::string Long(100000, 'm');
+    json Info = { { "playerslist", Long }, { "modlist", Long }, { "tags", Long }, { "clientversion", Long }, { "modlist2", "otra" } };
+    const json Out = json::parse(MR::SanitizeServerInfo(Info.dump()));
+    CHECK(Out["playerslist"].get<std::string>() == std::string(4096, 'm'));
+    CHECK(Out["modlist"].get<std::string>() == std::string(4096, 'm'));
+    CHECK(Out["tags"].get<std::string>() == std::string(4096, 'm'));
+    CHECK(Out["clientversion"].get<std::string>() == std::string(4096, 'm'));
+    CHECK(Out["modlist2"] == "otra");
+}
+
+TEST_CASE("MR::SanitizeServerInfo: lo que no es un objeto JSON no se reenvia") {
+    CHECK(MR::SanitizeServerInfo("").empty());
+    CHECK(MR::SanitizeServerInfo("no es json").empty());
+    CHECK(MR::SanitizeServerInfo("[1,2,3]").empty());
+    CHECK(MR::SanitizeServerInfo("\"texto\"").empty());
+    CHECK(MR::SanitizeServerInfo("42").empty());
+}
+
+TEST_CASE("MR::SanitizeServerInfo: un campo que no es texto no se toca y el multibyte no se parte") {
+    std::string Text;
+    for (int I = 0; I < 300; ++I) {
+        Text += "\xC3\xB1";
+    }
+    json Info = { { "name", Text }, { "version", 7 } };
+    const json Out = json::parse(MR::SanitizeServerInfo(Info.dump()));
+    CHECK(Out["name"].get<std::string>() == Text.substr(0, 512));
+    CHECK(Out["version"] == 7);
+}

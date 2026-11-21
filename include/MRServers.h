@@ -26,12 +26,22 @@ constexpr std::size_t MaxServers = 64;
 // descripcion y version): lo que pase se recorta.
 inline constexpr std::size_t MaxServerFieldChars = 256;
 
+// Largo maximo de los textos tipo lista de un server (playerslist, modlist, tags,
+// clientversion): son legitimamente mas largos que un nombre.
+inline constexpr std::size_t MaxServerListChars = 4096;
+
 // Recorta Text a Max caracteres UTF-8 sin partir una secuencia multibyte.
 std::string TruncateServerField(const std::string& Text, std::size_t Max = MaxServerFieldChars);
 
 // {name?, ip, port}: ip es un host o IPv4 (letras, digitos, '.', '-', '_'; 1-253
 // caracteres), port un entero 1-65535 y name, si esta, una cadena.
 bool IsValidServerCfg(const nlohmann::json& Cfg);
+
+// Respuesta de la consulta `I` lista para reenviar al juego: el mismo objeto con
+// name, map, desc y version recortados a MaxServerFieldChars y playerslist, modlist,
+// tags y clientversion a MaxServerListChars. Una respuesta que no es un objeto JSON
+// no se reenvia: devuelve "".
+std::string SanitizeServerInfo(const std::string& Reply);
 
 // Entrada de la lista de servidores del mod. Cfg = {name, ip, port};
 // InfoJson = respuesta de la consulta `I`, o "" si el server no contesto. Una

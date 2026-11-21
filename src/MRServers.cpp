@@ -90,6 +90,10 @@ std::string TruncateServerField(const std::string& Text, std::size_t Max) {
     return Text;
 }
 
+std::string SanitizeServerInfo(const std::string& Reply) {
+    return Reply;
+}
+
 bool IsValidServerCfg(const Json& Cfg) {
     if (!Cfg.is_object()) {
         return false;
