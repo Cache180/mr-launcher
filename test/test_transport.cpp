@@ -255,3 +255,136 @@ TEST_CASE("MR::TransportJson") {
     CHECK(MR::TransportJson(MR::Transport::Udp) == R"({"transport":"udp"})");
     CHECK(MR::TransportJson(MR::Transport::Tcp) == R"({"transport":"tcp"})");
 }
+
+TEST_CASE("MR::UseSendLarge: con UDP sano conserva la regla de hoy") {
+    // Hoy: SendLarge si es ack (O/T) o mide mas de 1000; el resto de TCP va por TCPSend.
+    CHECK(MR::UseSendLarge(WithFirst('O', 4), false, MR::Transport::Udp));
+    CHECK(MR::UseSendLarge(WithFirst('T', 4), false, MR::Transport::Udp));
+    CHECK(MR::UseSendLarge(WithFirst('Z', 1001), false, MR::Transport::Udp));
+    CHECK_FALSE(MR::UseSendLarge(WithFirst('C', 600), false, MR::Transport::Udp));
+    CHECK_FALSE(MR::UseSendLarge("p", false, MR::Transport::Udp));
+    // O/T solo cuentan como ack con mas de 3 bytes (igual que ShouldSendOverTcp).
+    CHECK_FALSE(MR::UseSendLarge("Ot", true, MR::Transport::Udp));
+}
+
+TEST_CASE("MR::UseSendLarge: en TCP, lo que iba por UDP usa el mismo encuadre que UDPSend") {
+    // Paquetes que de otro modo irian por UDP: SendLarge (comprime con ABG: si pasan de 400).
+    CHECK(MR::UseSendLarge("p", false, MR::Transport::Tcp));
+    CHECK(MR::UseSendLarge(WithFirst('Z', 600), false, MR::Transport::Tcp));
+    // Lo que ya iba por TCP conserva su camino: fiable pequeno -> TCPSend, ack o >1000 -> SendLarge.
+    CHECK_FALSE(MR::UseSendLarge(WithFirst('C', 600), false, MR::Transport::Tcp));
+    CHECK_FALSE(MR::UseSendLarge(WithFirst('Z', 600), true, MR::Transport::Tcp));
+    CHECK(MR::UseSendLarge(WithFirst('O', 4), false, MR::Transport::Tcp));
+    CHECK(MR::UseSendLarge(WithFirst('Z', 1500), true, MR::Transport::Tcp));
+}
+
+TEST_CASE("MR::TransportSession: sin sesion es UDP y no hace nada") {
+    MR::TransportSession Session;
+    int FtSent = 0;
+    CHECK(Session.Current() == MR::Transport::Udp);
+    CHECK_FALSE(Session.OnUdpPacket(1, T0));
+    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(60)), [&] { ++FtSent; }));
+    CHECK(FtSent == 0);
+    Session.End(1); // no-op
+    CHECK(Session.Current() == MR::Transport::Udp);
+}
+
+TEST_CASE("MR::TransportSession: UDP sano anuncia el primer datagrama una sola vez") {
+    MR::TransportSession Session;
+    int FtSent = 0;
+    const auto Gen = Session.Begin(false, T0);
+    CHECK(Gen != 0);
+    CHECK_FALSE(Session.TickAndAnnounce(AtMs(900), [&] { ++FtSent; }));
+    CHECK(Session.OnUdpPacket(Gen, AtMs(1000)));
+    CHECK_FALSE(Session.OnUdpPacket(Gen, AtMs(2000)));
+    for (int S = 2; S <= 30; ++S) {
+        Session.OnUdpPacket(Gen, At(seconds(S)));
+        CHECK_FALSE(Session.TickAndAnnounce(At(seconds(S)), [&] { ++FtSent; }));
+    }
+    CHECK(FtSent == 0);
+    CHECK(Session.Current() == MR::Transport::Udp);
+}
+
+TEST_CASE("MR::TransportSession: sin UDP a los 5 s envia Ft una vez y pasa a TCP") {
+    MR::TransportSession Session;
+    int FtSent = 0;
+    const auto Gen = Session.Begin(false, T0);
+    CHECK_FALSE(Session.TickAndAnnounce(AtMs(4900), [&] { ++FtSent; }));
+    CHECK(Session.TickAndAnnounce(At(seconds(5)), [&] { ++FtSent; }));
+    CHECK(FtSent == 1);
+    CHECK(Session.Current() == MR::Transport::Tcp);
+    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(6)), [&] { ++FtSent; }));
+    CHECK(FtSent == 1);
+    // Un datagrama tardio no anuncia "UDP" ni devuelve a UDP.
+    CHECK_FALSE(Session.OnUdpPacket(Gen, At(seconds(7))));
+    CHECK(Session.Current() == MR::Transport::Tcp);
+}
+
+TEST_CASE("MR::TransportSession: forzado a TCP, el primer Tick envia Ft") {
+    MR::TransportSession Session;
+    int FtSent = 0;
+    Session.Begin(true, T0);
+    CHECK(Session.Current() == MR::Transport::Udp); // hasta el primer Tick
+    CHECK(Session.TickAndAnnounce(T0, [&] { ++FtSent; }));
+    CHECK(FtSent == 1);
+    CHECK(Session.Current() == MR::Transport::Tcp);
+}
+
+TEST_CASE("MR::TransportSession: nadie ve TCP antes de que Ft haya salido") {
+    MR::TransportSession Session;
+    Session.Begin(true, T0);
+    std::atomic<bool> FtOnWire { false };
+    std::atomic<bool> SawTcpBeforeFt { false };
+    std::thread Sender;
+    CHECK(Session.TickAndAnnounce(T0, [&] {
+        Sender = std::thread([&] {
+            // Equivale a ServerSend decidiendo la ruta mientras el hilo del ping envia Ft.
+            if (Session.Current() == MR::Transport::Tcp && !FtOnWire.load()) {
+                SawTcpBeforeFt = true;
+            }
+        });
+        std::this_thread::sleep_for(milliseconds(50));
+        FtOnWire = true;
+    }));
+    Sender.join();
+    CHECK_FALSE(SawTcpBeforeFt.load());
+}
+
+TEST_CASE("MR::TransportSession: una sesion nueva empieza limpia y la anterior no la cierra") {
+    MR::TransportSession Session;
+    int FtSent = 0;
+    const auto Old = Session.Begin(false, T0);
+    CHECK(Session.TickAndAnnounce(At(seconds(5)), [&] { ++FtSent; }));
+    CHECK(Session.Current() == MR::Transport::Tcp);
+
+    const auto Fresh = Session.Begin(false, At(seconds(100)));
+    CHECK(Fresh != Old);
+    CHECK(Session.Current() == MR::Transport::Udp); // no hereda el TCP
+    CHECK_FALSE(Session.OnUdpPacket(Old, At(seconds(101)))); // datagrama del bucle viejo: ignorado
+    CHECK(Session.OnUdpPacket(Fresh, At(seconds(101))));
+
+    Session.End(Old); // el cierre tardio del bucle viejo no toca la sesion nueva
+    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(102)), [&] { ++FtSent; }));
+    CHECK(Session.Current() == MR::Transport::Udp);
+    CHECK(FtSent == 1);
+
+    Session.End(Fresh);
+    CHECK(Session.Current() == MR::Transport::Udp);
+    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(500)), [&] { ++FtSent; }));
+    CHECK(FtSent == 1);
+}
+
+TEST_CASE("MR::TransportSession: la sesion nueva forzada o no sale del cfg de cada vez") {
+    MR::TransportSession Session;
+    int FtSent = 0;
+    Session.Begin(true, T0);
+    CHECK(Session.TickAndAnnounce(T0, [&] { ++FtSent; }));
+    Session.Begin(false, At(seconds(10)));
+    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(11)), [&] { ++FtSent; }));
+    CHECK(Session.Current() == MR::Transport::Udp);
+}
+
+TEST_CASE("MR::ActiveTransport: es una unica instancia compartida") {
+    CHECK(&MR::ActiveTransport() == &MR::ActiveTransport());
+    CHECK(MR::ActiveTransport().Current() == MR::Transport::Udp);
+}
