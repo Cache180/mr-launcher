@@ -22,8 +22,10 @@
 #include "Logger.h"
 #include "MRTransport.h"
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <thread>
 #include <string>
 
 SOCKET UDPSock = -1;
@@ -76,9 +78,18 @@ void UDPRcv(std::uint64_t Generation) {
     if (UDPSock == -1)
         return;
     int32_t Rcv = recvfrom(UDPSock, Ret.data(), Ret.size() - 1, 0, (sockaddr*)&FromServer, &clientLength);
-    // Error o espera agotada (1 s sin datagrama): no es un fallo; el bucle vuelve a mirar Terminate.
-    if (Rcv == SOCKET_ERROR)
+    if (Rcv == SOCKET_ERROR) {
+        // Espera agotada (1 s sin datagrama): no es un fallo; el bucle vuelve a mirar Terminate.
+        // Cualquier otro error inmediato: respiro de 100 ms para no girar en vacio (sin log por vuelta).
+#if defined(_WIN32)
+        const bool TimedOut = WSAGetLastError() == WSAETIMEDOUT;
+#else
+        const bool TimedOut = errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+        if (!TimedOut)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         return;
+    }
     if (MR::ActiveTransport().OnUdpPacket(Generation, std::chrono::steady_clock::now()))
         info("Conexion: UDP");
     Ret[Rcv] = 0;
@@ -109,23 +120,29 @@ void UDPClientMain(const std::string& IP, int Port) {
     if (setsockopt(UDPSock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&RcvTimeout), sizeof(RcvTimeout)) != 0)
         warn("No se pudo fijar la espera de recepcion UDP: " + std::to_string(WSAGetLastError()));
     // Un monitor por sesion (nace limpio; solo el cfg decide si arranca forzado a TCP).
-    // Con Transport "tcp" el primer tick pasa a TCP ya (Ft antes que cualquier otro envio)
-    // y no se manda nada por UDP.
-    const std::uint64_t Generation = MR::ActiveTransport().Begin(ForceTcpTransport, std::chrono::steady_clock::now());
-    TransportTick();
-    const bool UdpUsable = MR::ActiveTransport().Current() == MR::Transport::Udp;
-    if (UdpUsable && !magic.empty())
+    // Forzado: Begin pasa a TCP bajo su propio candado (Ft antes que cualquier otro envio) y
+    // UdpUsed es false: no se manda ni se recibe nada por UDP en toda la sesion.
+    const auto Session = MR::ActiveTransport().Begin(ForceTcpTransport, std::chrono::steady_clock::now(), SendTransportFt);
+    const std::uint64_t Generation = Session.Generation;
+    if (Session.UdpUsed && !magic.empty())
         for (int i = 0; i < 10; i++)
             UDPSend(magic);
     GameSend("P" + std::to_string(ClientID));
     TCPSend("H", TCPSock);
-    if (UdpUsable)
+    if (Session.UdpUsed) {
         UDPSend("p");
-    debug("Starting UDP receive loop");
-    while (!Terminate) {
-        UDPRcv(Generation);
+        debug("Starting UDP receive loop");
+        while (!Terminate) {
+            UDPRcv(Generation);
+        }
+        debug("UDP receive loop done");
+    } else {
+        // Sin canal UDP: el socket nunca se envio nada (no esta enlazado), asi que recvfrom
+        // fallaria al instante. Solo se espera al cierre de la sesion.
+        debug("UDP no se usa en esta sesion (solo TCP)");
+        while (!Terminate)
+            std::this_thread::sleep_for(std::chrono::seconds(1));
     }
-    debug("UDP receive loop done");
     MR::ActiveTransport().End(Generation);
     KillSocket(UDPSock);
     WSACleanup();

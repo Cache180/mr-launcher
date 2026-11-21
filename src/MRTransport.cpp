@@ -10,6 +10,15 @@
 
 namespace MR {
 
+namespace {
+
+    // Unica definicion de "ack": O o T, y el primer byte solo se mira con mas de 3 bytes.
+    bool IsAckPacket(std::string_view Data) {
+        return Data.size() > 3 && (Data.front() == 'O' || Data.front() == 'T');
+    }
+
+} // namespace
+
 TransportMonitor::TransportMonitor(bool ForceTcp)
     : mForceTcp(ForceTcp) {
 }
@@ -56,7 +65,7 @@ bool ShouldSendOverTcp(std::string_view Data, bool Rel, Transport Current) {
     if (Data.size() > 3) {
         C = Data.front();
     }
-    const bool Ack = C == 'O' || C == 'T';
+    const bool Ack = IsAckPacket(Data);
     if (C == 'N' || C == 'W' || C == 'Y' || C == 'V' || C == 'E' || C == 'C') {
         Rel = true;
     }
@@ -71,20 +80,26 @@ std::string TransportJson(Transport Current) {
 }
 
 bool UseSendLarge(std::string_view Data, bool Rel, Transport Current) {
-    const bool Ack = Data.size() > 3 && (Data.front() == 'O' || Data.front() == 'T');
-    if (Ack || Data.size() > 1000) {
+    if (IsAckPacket(Data) || Data.size() > 1000) {
         return true;
     }
     // Solo por el fallback: lo que habria ido por UDP conserva el encuadre de UDPSend.
     return Current == Transport::Tcp && !ShouldSendOverTcp(Data, Rel, Transport::Udp);
 }
 
-std::uint64_t TransportSession::Begin(bool ForceTcp, TimePoint Now) {
+TransportSession::SessionStart TransportSession::Begin(bool ForceTcp, TimePoint Now, const std::function<void()>& SendFt) {
     std::scoped_lock Guard(mGate);
     mMonitor = std::make_unique<TransportMonitor>(ForceTcp);
     mMonitor->OnUdpStarted(Now);
     mUdpAnnounced = false;
-    return ++mGeneration;
+    ++mGeneration;
+    // Forzado: el cambio a TCP se hace aqui, bajo el mismo candado y con la misma regla que
+    // TickAndAnnounce. Nadie observa Udp tras Begin(true) y Ft sale antes que cualquier otro envio.
+    const bool Forced = ForceTcp && mMonitor->Tick(Now);
+    if (Forced) {
+        SendFt();
+    }
+    return { mGeneration, !Forced };
 }
 
 void TransportSession::End(std::uint64_t Generation) {
@@ -112,6 +127,11 @@ bool TransportSession::TickAndAnnounce(TimePoint Now, const std::function<void()
     if (!mMonitor || !mMonitor->Tick(Now)) {
         return false;
     }
+    // A proposito, SendFt (un send() TCP que puede bloquearse) corre con mGate cogido: es lo que
+    // garantiza que ningun paquete se encamine por TCP antes que Ft. Mientras dure, se detienen
+    // Current() (ServerSend y la ruta /mr/transport) y OnUdpPacket (recepcion UDP). Ft pesa
+    // 2 bytes, asi que en la practica es instantaneo; si el socket TCP se atasca, los envios se
+    // atascarian igualmente en el propio send().
     SendFt();
     return true;
 }

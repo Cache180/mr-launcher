@@ -9,6 +9,7 @@
 #include <Zlib/Compressor.h>
 #include <chrono>
 #include <iostream>
+#include <mutex>
 #include <vector>
 
 #if defined(_WIN32)
@@ -56,6 +57,15 @@ void TCPSend(const std::string& Data, uint64_t Sock) {
         UUl("Invalid Socket");
         return;
     }
+
+    // Un solo escritor a la vez en el socket del server: tras el fallback a TCP escriben el
+    // ping (AutoPing, 1 Hz) y el hilo que reenvia lo del juego; un envio parcial no puede
+    // quedar partido por otro marco. Se mantiene durante todo el bucle de send() y la ruta de
+    // error de CheckBytes.
+    // Orden de candados: TransportSession::mGate primero, este despues (camino de Ft). Nada
+    // que se ejecute con este candado cogido puede llamar a Current()/Tick/OnUdpPacket.
+    static std::mutex SendLock;
+    std::scoped_lock SendGuard(SendLock);
 
     int32_t Size, Sent, Temp;
     std::string Send(4, 0);

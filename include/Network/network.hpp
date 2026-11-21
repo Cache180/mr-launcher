@@ -53,6 +53,7 @@ std::string GetAddr(const std::string& IP);
 void ServerParser(std::string_view Data);
 // Fallback a TCP (MRTransport): tick del monitor y bandera del cfg `Transport: "tcp"`.
 void TransportTick();
+void SendTransportFt();
 extern bool ForceTcpTransport;
 void TCPSend(const std::string& Data, uint64_t Sock);
 void TCPClientMain(const std::string& IP, int Port);

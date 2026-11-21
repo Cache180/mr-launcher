@@ -78,9 +78,16 @@ class TransportSession {
 public:
     using TimePoint = TransportMonitor::TimePoint;
 
+    struct SessionStart {
+        std::uint64_t Generation; // identifica a quien abrio la sesion (para End y OnUdpPacket)
+        bool UdpUsed; // false: la sesion va solo por TCP; no se usa el canal UDP
+    };
+
     // Empieza una sesion nueva (descarta por completo la anterior, incluido su TCP) y
-    // arranca su canal UDP. Devuelve la generacion, que identifica a quien la abrio.
-    std::uint64_t Begin(bool ForceTcp, TimePoint Now);
+    // arranca su canal UDP. Con ForceTcp pasa a TCP DENTRO de este mismo candado: llama a
+    // SendFt antes de que nadie pueda ver Transport::Tcp, no hay ventana en UDP y
+    // UdpUsed es false (el llamador no envia ni recibe nada por UDP).
+    SessionStart Begin(bool ForceTcp, TimePoint Now, const std::function<void()>& SendFt);
     // Cierra la sesion si Generation sigue siendo la activa; si ya hay otra mas nueva, no hace nada.
     void End(std::uint64_t Generation);
     // Llego un datagrama UDP del server. true solo para el primero de la sesion mientras

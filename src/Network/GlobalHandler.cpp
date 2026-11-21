@@ -171,11 +171,13 @@ SOCKET SetupListener() {
 // Un tick del monitor de transporte (1 Hz desde AutoPing; ademas, al arrancar el canal UDP).
 // Al pasar a TCP envia `Ft` con un envio TCP propio (2 bytes: ShouldSendOverTcp no lo
 // encaminaria por TCP) y TickAndAnnounce lo hace antes de que nadie vea Transport::Tcp.
+void SendTransportFt() {
+    TCPSend("Ft", TCPSock);
+    info("Conexion: TCP (UDP bloqueado)");
+}
+
 void TransportTick() {
-    MR::ActiveTransport().TickAndAnnounce(std::chrono::steady_clock::now(), [] {
-        TCPSend("Ft", TCPSock);
-        info("Conexion: TCP (UDP bloqueado)");
-    });
+    MR::ActiveTransport().TickAndAnnounce(std::chrono::steady_clock::now(), SendTransportFt);
 }
 
 void AutoPing() {
