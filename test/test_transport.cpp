@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <string>
 #include <thread>
 
@@ -29,6 +30,9 @@ Clock::time_point At(seconds S) {
 Clock::time_point AtMs(int Ms) {
     return T0 + milliseconds(Ms);
 }
+
+// Ft de mentira para las sesiones que no la necesitan.
+const std::function<void()> NoFt = [] {};
 
 std::string WithFirst(char First, std::size_t Total) {
     return std::string(1, First) + std::string(Total - 1, 'a');
@@ -292,7 +296,7 @@ TEST_CASE("MR::TransportSession: sin sesion es UDP y no hace nada") {
 TEST_CASE("MR::TransportSession: UDP sano anuncia el primer datagrama una sola vez") {
     MR::TransportSession Session;
     int FtSent = 0;
-    const auto Gen = Session.Begin(false, T0);
+    const auto Gen = Session.Begin(false, T0, NoFt).Generation;
     CHECK(Gen != 0);
     CHECK_FALSE(Session.TickAndAnnounce(AtMs(900), [&] { ++FtSent; }));
     CHECK(Session.OnUdpPacket(Gen, AtMs(1000)));
@@ -308,7 +312,7 @@ TEST_CASE("MR::TransportSession: UDP sano anuncia el primer datagrama una sola v
 TEST_CASE("MR::TransportSession: sin UDP a los 5 s envia Ft una vez y pasa a TCP") {
     MR::TransportSession Session;
     int FtSent = 0;
-    const auto Gen = Session.Begin(false, T0);
+    const auto Gen = Session.Begin(false, T0, NoFt).Generation;
     CHECK_FALSE(Session.TickAndAnnounce(AtMs(4900), [&] { ++FtSent; }));
     CHECK(Session.TickAndAnnounce(At(seconds(5)), [&] { ++FtSent; }));
     CHECK(FtSent == 1);
@@ -320,25 +324,61 @@ TEST_CASE("MR::TransportSession: sin UDP a los 5 s envia Ft una vez y pasa a TCP
     CHECK(Session.Current() == MR::Transport::Tcp);
 }
 
-TEST_CASE("MR::TransportSession: forzado a TCP, el primer Tick envia Ft") {
+TEST_CASE("MR::TransportSession: Begin sin forzar usa UDP y no envia Ft") {
     MR::TransportSession Session;
     int FtSent = 0;
-    Session.Begin(true, T0);
-    CHECK(Session.Current() == MR::Transport::Udp); // hasta el primer Tick
-    CHECK(Session.TickAndAnnounce(T0, [&] { ++FtSent; }));
+    const auto Start = Session.Begin(false, T0, [&] { ++FtSent; });
+    CHECK(Start.Generation != 0);
+    CHECK(Start.UdpUsed);
+    CHECK(FtSent == 0);
+    CHECK(Session.Current() == MR::Transport::Udp);
+}
+
+TEST_CASE("MR::TransportSession: Begin forzado envia Ft una vez, pasa a TCP y no usa UDP") {
+    MR::TransportSession Session;
+    int FtSent = 0;
+    const auto Start = Session.Begin(true, T0, [&] { ++FtSent; });
+    CHECK(Start.Generation != 0);
+    CHECK_FALSE(Start.UdpUsed);
     CHECK(FtSent == 1);
+    // Nunca hay una ventana en UDP: no hace falta un Tick para que Current() sea TCP.
+    CHECK(Session.Current() == MR::Transport::Tcp);
+    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(1)), [&] { ++FtSent; }));
+    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(60)), [&] { ++FtSent; }));
+    CHECK(FtSent == 1);
+    // Un datagrama UDP perdido no anuncia "UDP" ni devuelve a UDP.
+    CHECK_FALSE(Session.OnUdpPacket(Start.Generation, At(seconds(2))));
     CHECK(Session.Current() == MR::Transport::Tcp);
 }
 
-TEST_CASE("MR::TransportSession: nadie ve TCP antes de que Ft haya salido") {
+TEST_CASE("MR::TransportSession: Begin forzado, nadie ve TCP antes de que Ft haya salido") {
     MR::TransportSession Session;
-    Session.Begin(true, T0);
     std::atomic<bool> FtOnWire { false };
     std::atomic<bool> SawTcpBeforeFt { false };
     std::thread Sender;
-    CHECK(Session.TickAndAnnounce(T0, [&] {
+    const auto Start = Session.Begin(true, T0, [&] {
         Sender = std::thread([&] {
-            // Equivale a ServerSend decidiendo la ruta mientras el hilo del ping envia Ft.
+            // Equivale a ServerSend decidiendo la ruta mientras se envia Ft.
+            if (Session.Current() == MR::Transport::Tcp && !FtOnWire.load()) {
+                SawTcpBeforeFt = true;
+            }
+        });
+        std::this_thread::sleep_for(milliseconds(50));
+        FtOnWire = true;
+    });
+    Sender.join();
+    CHECK_FALSE(Start.UdpUsed);
+    CHECK_FALSE(SawTcpBeforeFt.load());
+}
+
+TEST_CASE("MR::TransportSession: pasar a TCP por el Tick, nadie ve TCP antes de que Ft haya salido") {
+    MR::TransportSession Session;
+    Session.Begin(false, T0, NoFt);
+    std::atomic<bool> FtOnWire { false };
+    std::atomic<bool> SawTcpBeforeFt { false };
+    std::thread Sender;
+    CHECK(Session.TickAndAnnounce(At(seconds(5)), [&] {
+        Sender = std::thread([&] {
             if (Session.Current() == MR::Transport::Tcp && !FtOnWire.load()) {
                 SawTcpBeforeFt = true;
             }
@@ -353,11 +393,11 @@ TEST_CASE("MR::TransportSession: nadie ve TCP antes de que Ft haya salido") {
 TEST_CASE("MR::TransportSession: una sesion nueva empieza limpia y la anterior no la cierra") {
     MR::TransportSession Session;
     int FtSent = 0;
-    const auto Old = Session.Begin(false, T0);
+    const auto Old = Session.Begin(false, T0, NoFt).Generation;
     CHECK(Session.TickAndAnnounce(At(seconds(5)), [&] { ++FtSent; }));
     CHECK(Session.Current() == MR::Transport::Tcp);
 
-    const auto Fresh = Session.Begin(false, At(seconds(100)));
+    const auto Fresh = Session.Begin(false, At(seconds(100)), NoFt).Generation;
     CHECK(Fresh != Old);
     CHECK(Session.Current() == MR::Transport::Udp); // no hereda el TCP
     CHECK_FALSE(Session.OnUdpPacket(Old, At(seconds(101)))); // datagrama del bucle viejo: ignorado
@@ -377,9 +417,9 @@ TEST_CASE("MR::TransportSession: una sesion nueva empieza limpia y la anterior n
 TEST_CASE("MR::TransportSession: la sesion nueva forzada o no sale del cfg de cada vez") {
     MR::TransportSession Session;
     int FtSent = 0;
-    Session.Begin(true, T0);
-    CHECK(Session.TickAndAnnounce(T0, [&] { ++FtSent; }));
-    Session.Begin(false, At(seconds(10)));
+    CHECK_FALSE(Session.Begin(true, T0, [&] { ++FtSent; }).UdpUsed);
+    CHECK(FtSent == 1);
+    CHECK(Session.Begin(false, At(seconds(10)), NoFt).UdpUsed);
     CHECK_FALSE(Session.TickAndAnnounce(At(seconds(11)), [&] { ++FtSent; }));
     CHECK(Session.Current() == MR::Transport::Udp);
 }
