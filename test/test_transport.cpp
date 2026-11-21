@@ -182,24 +182,63 @@ TEST_CASE("MR::TransportMonitor: un datagrama antes de los 5 s inicia la regla d
     CHECK(Monitor.Tick());
 }
 
-TEST_CASE("MR::TransportMonitor: los errores que vuelven al instante no acumulan espera") {
+TEST_CASE("MR::TransportMonitor: una duracion cero o negativa no suma nada (propiedad del modulo)") {
+    // Ojo: esto NO dice que un error instantaneo de recvfrom sea inocuo; el llamador debe medir
+    // desde el inicio de la recepcion incluyendo su respiro (ver el caso de error + 100 ms).
     MR::TransportMonitor Monitor(false);
     Monitor.OnUdpStarted();
-    // Un socket roto: recvfrom falla al momento miles de veces (duracion ~0), ademas de
-    // duraciones negativas por si el reloj se comportara mal.
     for (int I = 0; I < 5000; ++I) {
         Monitor.OnUdpWait(milliseconds(0));
         Monitor.OnUdpWait(milliseconds(-50));
         CHECK_FALSE(Monitor.Tick());
     }
     CHECK(Monitor.Current() == MR::Transport::Udp);
-    // Las esperas cortas pero reales si suman: 5000 x 1 ms = 5 s antes del primer datagrama.
-    for (int I = 0; I < 4999; ++I) {
-        Monitor.OnUdpWait(milliseconds(1));
+}
+
+TEST_CASE("MR::TransportMonitor: las esperas se acumulan con resolucion sub-milisegundo") {
+    MR::TransportMonitor Monitor(false);
+    Monitor.OnUdpStarted();
+    // 10000 x 500 us = 5 s exactos antes del primer datagrama.
+    for (int I = 0; I < 9999; ++I) {
+        Monitor.OnUdpWait(std::chrono::microseconds(500));
     }
     CHECK_FALSE(Monitor.Tick());
-    Monitor.OnUdpWait(milliseconds(1));
+    Monitor.OnUdpWait(std::chrono::microseconds(500));
     CHECK(Monitor.Tick());
+}
+
+TEST_CASE("MR::TransportMonitor: cinco esperas de 1 s medidas con ruido alcanzan 5 s") {
+    MR::TransportMonitor Monitor(false);
+    Monitor.OnUdpStarted();
+    // Un timeout de 1 s mide en la practica ligeramente mas o menos de 1000 ms; sin truncar,
+    // 4 x 999,9 ms + 1 x 1000,4 ms ya son 5 s.
+    for (int I = 0; I < 4; ++I) {
+        Monitor.OnUdpWait(std::chrono::microseconds(999'900));
+    }
+    CHECK_FALSE(Monitor.Tick());
+    Monitor.OnUdpWait(std::chrono::microseconds(1'000'400));
+    CHECK(Monitor.Tick());
+}
+
+TEST_CASE("MR::TransportMonitor: error instantaneo + respiro de 100 ms alcanza los umbrales") {
+    // UDP rechazado (ICMP -> WSAECONNRESET): recvfrom falla en ~0 ms y UDPRcv hace 100 ms de respiro;
+    // el llamador reporta el tiempo desde el inicio de la recepcion, es decir ~100 ms por vuelta.
+    for (bool FirstDatagram : { false, true }) {
+        CAPTURE(FirstDatagram);
+        MR::TransportMonitor Monitor(false);
+        Monitor.OnUdpStarted();
+        if (FirstDatagram) {
+            Monitor.OnUdpPacket();
+        }
+        const int Needed = FirstDatagram ? 100 : 50; // 10 s / 100 ms y 5 s / 100 ms
+        for (int I = 1; I < Needed; ++I) {
+            Monitor.OnUdpWait(milliseconds(100));
+            CHECK_FALSE(Monitor.Tick());
+        }
+        Monitor.OnUdpWait(milliseconds(100));
+        CHECK(Monitor.Tick());
+        CHECK(Monitor.Current() == MR::Transport::Tcp);
+    }
 }
 
 TEST_CASE("MR::TransportMonitor: sin vuelta a UDP") {
