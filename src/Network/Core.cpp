@@ -269,7 +269,10 @@ void Parse(std::string Data, SOCKET CSocket) {
     }
 }
 void GameHandler(SOCKET Client) {
-    CoreSocket = Client;
+    {
+        std::lock_guard lock(sendMutex);
+        CoreSocket = Client;
+    }
     std::vector<char> data{};
     int Temp;
     char Header[10] = { 0 };

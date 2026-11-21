@@ -153,5 +153,6 @@ void UDPClientMain(const std::string& IP, int Port) {
     }
     MR::ActiveTransport().End(Generation);
     KillSocket(UDPSock);
+    UDPSock = -1; // AutoPing de la sesion siguiente no debe ver un descriptor cerrado
     WSACleanup();
 }

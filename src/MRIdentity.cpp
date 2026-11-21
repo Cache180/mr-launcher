@@ -30,6 +30,15 @@ namespace fs = std::filesystem;
 
 namespace MR {
 
+std::string PathToUtf8(const fs::path& Path) {
+    try {
+        const auto Utf8 = Path.u8string();
+        return std::string(Utf8.begin(), Utf8.end());
+    } catch (...) {
+        return "<ruta no representable>";
+    }
+}
+
 fs::path ConfigPath(const fs::path& ExeDir) {
     return ExeDir / ConfigFileName;
 }

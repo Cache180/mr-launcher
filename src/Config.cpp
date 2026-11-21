@@ -37,7 +37,7 @@ static nlohmann::json ParseServers(const nlohmann::json& d) {
     }
     std::size_t Index = 0;
     for (const auto& Entry : d["Servers"]) {
-        const std::string Where = "Servers[" + std::to_string(Index++) + "] de " + ConfigFile.string();
+        const std::string Where = "Servers[" + std::to_string(Index++) + "] de " + MR::PathToUtf8(ConfigFile);
         if (!MR::IsValidServerCfg(Entry)) {
             warn(Where + " no es un {name, ip, port} valido: se omite.");
         } else if (Valid.size() >= MR::MaxServers) {
@@ -78,14 +78,14 @@ void ConfigInit() {
     // (Port, Build, Name, Install, Servers...). Aqui solo se lee.
     const MR::LauncherIdentity Identity = MR::LoadOrCreateIdentity(ConfigFile);
     if (Identity.Install.empty()) {
-        fatal("No se pudo leer o guardar la identidad en " + ConfigFile.string() + ". Cierra cualquier programa que este usando ese archivo (antivirus, sincronizacion) y vuelve a abrir el launcher.");
+        fatal("No se pudo leer o guardar la identidad en " + MR::PathToUtf8(ConfigFile) + ". Cierra cualquier programa que este usando ese archivo (antivirus, sincronizacion) y vuelve a abrir el launcher.");
     }
     if (!fs::exists(ConfigFile)) {
-        fatal("No se pudo escribir " + ConfigFile.string() + " en disco.");
+        fatal("No se pudo escribir " + MR::PathToUtf8(ConfigFile) + " en disco.");
     }
     std::ifstream cfg(ConfigFile, std::ios::binary);
     if (!cfg.is_open()) {
-        fatal("No se pudo abrir " + ConfigFile.string() + ".");
+        fatal("No se pudo abrir " + MR::PathToUtf8(ConfigFile) + ".");
     }
     auto Size = fs::file_size(ConfigFile);
     std::string Buffer(Size, 0);
@@ -93,7 +93,7 @@ void ConfigInit() {
     cfg.close();
     nlohmann::json d = nlohmann::json::parse(Buffer, nullptr, false);
     if (d.is_discarded() || !d.is_object()) {
-        fatal(ConfigFile.string() + " no es un JSON valido.");
+        fatal(MR::PathToUtf8(ConfigFile) + " no es un JSON valido.");
     }
     Username = Identity.Name;
     InstallKey = Identity.Install;

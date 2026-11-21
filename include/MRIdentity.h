@@ -27,6 +27,10 @@ struct LauncherIdentity {
     std::string Install;
 };
 
+// Ruta -> UTF-8 para mensajes y registros. A diferencia de path::string() (que con MSVC lanza
+// si hay caracteres fuera de la pagina de codigos ANSI) nunca lanza.
+std::string PathToUtf8(const std::filesystem::path& Path);
+
 // Nombre del archivo de configuracion. Vive junto al ejecutable, nunca en el
 // directorio de trabajo: arrancar el launcher desde otra carpeta no puede crear
 // una segunda identidad.
