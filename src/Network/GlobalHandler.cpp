@@ -14,7 +14,9 @@
 #elif defined(__linux__)
 #include "linuxfixes.h"
 #include <arpa/inet.h>
+#include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
@@ -183,7 +185,7 @@ SOCKET SetupListener() {
     }
     return GSocket;
 }
-// Un tick del monitor de transporte (1 Hz desde AutoPing; ademas, al arrancar el canal UDP).
+// Un tick del monitor de transporte (1 Hz, solo desde AutoPing).
 // Al pasar a TCP envia `Ft` con un envio TCP propio (2 bytes: ShouldSendOverTcp no lo
 // encaminaria por TCP) y TickAndAnnounce lo hace antes de que nadie vea Transport::Tcp.
 void SendTransportFt() {

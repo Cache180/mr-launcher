@@ -38,7 +38,7 @@ inline constexpr auto SessionUdpSilence = std::chrono::seconds(10);
 
 class TransportMonitor {
 public:
-    using Duration = std::chrono::milliseconds;
+    using Duration = std::chrono::nanoseconds;
 
     // ForceTcp: el primer Tick tras OnUdpStarted pasa a TCP sin esperar.
     explicit TransportMonitor(bool ForceTcp);

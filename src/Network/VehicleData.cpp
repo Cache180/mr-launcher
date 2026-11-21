@@ -91,12 +91,15 @@ void UDPRcv(std::uint64_t Generation) {
 #else
         const bool TimedOut = errno == EAGAIN || errno == EWOULDBLOCK;
 #endif
-        // Sin datagrama (espera agotada o error): lo esperado dentro de la propia llamada cuenta para el monitor.
-        MR::ActiveTransport().OnUdpWait(Generation, std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - WaitStart));
         // Espera agotada (1 s sin datagrama): no es un fallo; el bucle vuelve a mirar Terminate.
-        // Cualquier otro error inmediato: respiro de 100 ms para no girar en vacio (sin log por vuelta).
+        // Cualquier otro error (p. ej. ICMP rechazado): respiro de 100 ms para no girar en vacio (sin
+        // log por vuelta). El respiro es tiempo de espera, no de reenvio al juego, y va ANTES de
+        // medir: un error que vuelve al instante en bucle acumula ~100 ms por vuelta y alcanza el umbral.
         if (!TimedOut)
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // Sin datagrama: todo lo transcurrido desde el inicio de la recepcion cuenta para el monitor,
+        // a resolucion completa del reloj (sin truncar a milisegundos).
+        MR::ActiveTransport().OnUdpWait(Generation, std::chrono::steady_clock::now() - WaitStart);
         return;
     }
     if (MR::ActiveTransport().OnUdpPacket(Generation))
@@ -140,6 +143,18 @@ void UDPClientMain(const std::string& IP, int Port) {
 #endif
     if (setsockopt(UDPSock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&RcvTimeout), sizeof(RcvTimeout)) != 0)
         warn("No se pudo fijar la espera de recepcion UDP: " + std::to_string(WSAGetLastError()));
+#if defined(_WIN32)
+    // Un ICMP "puerto inalcanzable" hace que el siguiente recvfrom de un socket UDP sin conectar
+    // falle al instante con WSAECONNRESET: con UDP rechazado eso seria un bucle de errores en vez de
+    // esperas normales. Se desactiva; si falla no es grave (UDPRcv tiene su propia guarda).
+    {
+        constexpr DWORD UdpConnReset = _WSAIOW(IOC_VENDOR, 12); // SIO_UDP_CONNRESET
+        BOOL NewBehavior = FALSE;
+        DWORD Returned = 0;
+        if (WSAIoctl(UDPSock, UdpConnReset, &NewBehavior, sizeof(NewBehavior), nullptr, 0, &Returned, nullptr, nullptr) != 0)
+            debug("No se pudo desactivar SIO_UDP_CONNRESET: " + std::to_string(WSAGetLastError()));
+    }
+#endif
     }
     if (Session.UdpUsed && !magic.empty())
         for (int i = 0; i < 10; i++)

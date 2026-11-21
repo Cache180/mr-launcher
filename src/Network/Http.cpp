@@ -8,7 +8,6 @@
 #include "Logger.h"
 #include "Network/network.hpp"
 #include <httplib.h>
-#include <cstdint>
 #include <string>
 #include <thread>
 
@@ -26,12 +25,6 @@ void HTTP::StartProxy() {
         const std::string pattern = ".*";
         HTTPProxy.Get(pattern, NotAvailable);
         HTTPProxy.Post(pattern, NotAvailable);
-        // El juego se crea con herencia de handles: el socket de escucha no debe heredarse (el puerto
-        // seguiria ocupado aunque el launcher muriera). Reemplaza las opciones por defecto de httplib
-        // (SO_REUSEADDR), que en un puerto aleatorio de 127.0.0.1 no hacen falta.
-        HTTPProxy.set_socket_options([](auto Sock) {
-            MakeSocketNonInheritable(static_cast<std::uint64_t>(Sock));
-        });
 
         ProxyPort = HTTPProxy.bind_to_any_port("127.0.0.1");
         if (ProxyPort < 0) {
