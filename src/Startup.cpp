@@ -18,6 +18,7 @@
 #include <unistd.h>
 #endif // __APPLE__
 #include "MRMods.h"
+#include "MRPaths.h"
 #include "Logger.h"
 #include "Network/network.hpp"
 #include "Options.h"
@@ -48,50 +49,13 @@ std::string GetPatch() {
     return ".0";
 }
 
-beammp_fs_string GetEP(const beammp_fs_char* P) {
-    static beammp_fs_string Ret = [&]() {
-        beammp_fs_string path(P);
-        return path.substr(0, path.find_last_of(beammp_wide("\\/")) + 1);
-    }();
-    return Ret;
-}
-
-fs::path GetBP(const beammp_fs_char* P) {
-    fs::path fspath = {};
-#if defined(_WIN32)
-    // El tamano se pasa en caracteres (no en bytes). 0 es fallo y un resultado igual al
-    // tamano es ruta truncada: sin la carpeta del launcher no se puede seguir.
-    std::vector<beammp_fs_char> path(32768);
-    const DWORD len = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
-    if (len == 0 || len >= path.size()) {
+// Carpeta del exe: MR::ExeDir es la unica fuente (cfg, log y cache cuelgan de ella).
+fs::path GetBP() {
+    static const fs::path Dir = MR::ExeDir();
+    if (Dir.empty()) {
         fatal("No se pudo determinar la carpeta del launcher (ruta demasiado larga?)");
     }
-    fspath = path.data();
-#elif defined(__linux__)
-    fspath = fs::canonical("/proc/self/exe");
-#elif defined(__APPLE__)
-    pid_t pid = getpid();
-    char path[PROC_PIDPATHINFO_MAXSIZE];
-    // While this is fine for a raw executable,
-    // an application bundle is read-only and these files
-    // should instead be placed in Application Support.
-    proc_pidpath(pid, path, sizeof(path));
-    fspath = std::string(path);
-#else
-    fspath = beammp_fs_string(P);
-#endif
-    // parent_path (no string + "/.."): sin conversion a cadena estrecha, que lanza con rutas
-    // fuera de la pagina de codigos ANSI.
-    try {
-        fspath = fs::weakly_canonical(fspath.parent_path());
-    } catch (const std::exception&) {
-        fatal("No se pudo determinar la carpeta del launcher (ruta demasiado larga?)");
-    }
-#if defined(_WIN32)
-    return fspath.wstring();
-#else
-    return fspath.string();
-#endif
+    return Dir;
 }
 
 #if defined(_WIN32)

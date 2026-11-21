@@ -6,6 +6,8 @@
 
 #include "MRIdentity.h"
 
+#include "MRPaths.h"
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -219,7 +221,7 @@ namespace {
             Changed = true;
         }
         if (!Doc.contains("CachingDirectory")) {
-            Doc["CachingDirectory"] = "./Resources";
+            Doc["CachingDirectory"] = DefaultCacheDir;
             Changed = true;
         }
         auto Name = Doc.find("Name");
@@ -279,7 +281,11 @@ namespace {
             return Prepare::Unreadable;
         }
         Doc = Read.Valid ? std::move(Read.Doc) : Json::object();
-        if (Read.NonEmpty && ExtractIdentity(Doc).Install.empty() && !BackupCorrupt(File)) {
+        // Un objeto JSON que solo no trae Install es un cfg nuevo (se genera la clave y se
+        // conserva el resto): nada que salvar. Se copia lo que no se pudo leer como objeto y
+        // lo que tiene un Install presente pero invalido.
+        const bool Damaged = !Read.Valid || (Doc.contains("Install") && ExtractIdentity(Doc).Install.empty());
+        if (Read.NonEmpty && Damaged && !BackupCorrupt(File)) {
             return Prepare::BackupFailed;
         }
         try {

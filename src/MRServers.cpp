@@ -79,7 +79,14 @@ namespace {
 
 }
 
-std::string TruncateServerField(const std::string& Text, std::size_t) {
+std::string TruncateServerField(const std::string& Text, std::size_t Max) {
+    std::size_t Chars = 0;
+    for (std::size_t I = 0; I < Text.size(); ++I) {
+        // Los bytes de continuacion UTF-8 (10xxxxxx) no abren un caracter nuevo.
+        if ((static_cast<unsigned char>(Text[I]) & 0xC0) != 0x80 && Chars++ == Max) {
+            return Text.substr(0, I);
+        }
+    }
     return Text;
 }
 
@@ -115,16 +122,16 @@ Json BuildServerEntry(const Json& Cfg, const std::string& InfoJson) {
     Json Entry = Json::object();
     Entry["ip"] = Ip;
     Entry["port"] = Port; // el del cfg, no el que diga el server
-    Entry["sname"] = Name;
-    Entry["sdesc"] = TextField(Info, "desc", "");
-    Entry["map"] = TextField(Info, "map", "");
+    Entry["sname"] = TruncateServerField(Name);
+    Entry["sdesc"] = TruncateServerField(TextField(Info, "desc", ""));
+    Entry["map"] = TruncateServerField(TextField(Info, "map", ""));
     Entry["players"] = TextField(Info, "players", "0");
     Entry["maxplayers"] = TextField(Info, "maxplayers", "0");
     Entry["playerslist"] = TextField(Info, "playerslist", "");
     Entry["modlist"] = TextField(Info, "modlist", "");
     Entry["modstotal"] = TextField(Info, "modstotal", "0");
     Entry["modstotalsize"] = TextField(Info, "modstotalsize", "0");
-    Entry["version"] = TextField(Info, "version", "");
+    Entry["version"] = TruncateServerField(TextField(Info, "version", ""));
     Entry["cversion"] = TextField(Info, "clientversion", "");
     Entry["tags"] = TextField(Info, "tags", "");
     Entry["location"] = "";

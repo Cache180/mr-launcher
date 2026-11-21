@@ -6,6 +6,8 @@
 
 
 #include "MRHandshake.h"
+#include "MRIdentity.h"
+#include "MRWire.h"
 #include "Network/network.hpp"
 #include <chrono>
 #include <iomanip>
@@ -138,10 +140,25 @@ void AsyncUpdate(uint64_t& Rcv, uint64_t Size, const std::string& Name) {
 // MICROSOFT, I DONT CARE, WRITE BETTER CODE
 #undef min
 
+// false (y descarga abortada con estado visible) si el server declara un mod mayor que
+// MR::MaxModBytes o vacio.
+static bool RejectOversizedMod(uint64_t Size) {
+    if (MR::IsSaneModSize(Size)) {
+        return true;
+    }
+    Terminate = true;
+    UUl("respuesta invalida del servidor");
+    return false;
+}
+
 std::vector<char> TCPRcvRaw(SOCKET Sock, uint64_t& GRcv, uint64_t Size) {
     if (Sock == -1) {
         Terminate = true;
         UUl("Invalid Socket");
+        return {};
+    }
+    // El tope se aplica antes de reservar memoria: el tamano lo declara el server.
+    if (!RejectOversizedMod(Size)) {
         return {};
     }
     std::vector<char> File;
@@ -257,6 +274,9 @@ std::vector<char> MultiDownload(SOCKET MSock, SOCKET DSock, uint64_t Size, const
 
     uint64_t GRcv = 0;
 
+    if (!RejectOversizedMod(Size)) {
+        return {};
+    }
     uint64_t MSize = Size / 2;
     uint64_t DSize = Size - MSize;
 
@@ -522,7 +542,7 @@ void NewSyncResources(SOCKET Sock, const std::string& Mods, const std::vector<Mo
         }
 
         if (ModInfoIter->Protected) {
-            std::string message = "Mod '" + ModInfoIter->FileName + "' is protected and therefore must be placed in the Resources/Caching folder manually here: " + absolute(CachingDirectory).string();
+            std::string message = "Mod '" + ModInfoIter->FileName + "' is protected and therefore must be placed in the Resources/Caching folder manually here: " + MR::PathToUtf8(absolute(CachingDirectory));
 
             error(message);
             UUl(message);
@@ -610,7 +630,8 @@ void NewSyncResources(SOCKET Sock, const std::string& Mods, const std::vector<Mo
         TCPSend("Done", Sock);
         info("Done!");
     } else {
-        UlStatus = "Ulstart";
+        // Sin tocar UlStatus: el error de la descarga se queda visible hasta el siguiente intento
+        // de conexion (NetReset).
         info("Connection Terminated!");
     }
 }
@@ -793,7 +814,8 @@ void SyncResources(SOCKET Sock, const MR::LauncherIdentity& Identity) {
         TCPSend("Done", Sock);
         info("Done!");
     } else {
-        UlStatus = "Ulstart";
+        // Sin tocar UlStatus: el error de la descarga se queda visible hasta el siguiente intento
+        // de conexion (NetReset).
         info("Connection Terminated!");
     }
 }

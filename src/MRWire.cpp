@@ -12,8 +12,8 @@ bool IsSaneFrameLength(std::int32_t Header) {
     return Header >= 1 && Header <= MaxFrameBytes;
 }
 
-bool IsSaneModSize(std::uint64_t) {
-    return true;
+bool IsSaneModSize(std::uint64_t Size) {
+    return Size >= 1 && Size <= MaxModBytes;
 }
 
 }

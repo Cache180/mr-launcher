@@ -6,6 +6,7 @@
 
 
 #include "Logger.h"
+#include "MRPaths.h"
 #include "Startup.h"
 #include "Utils.h"
 #include <chrono>
@@ -35,9 +36,16 @@ std::string getDate() {
         << "] ";
     return date.str();
 }
+// Junto al exe, con ruta ancha: ni el directorio de trabajo ni los caracteres fuera de la
+// pagina ANSI la afectan.
+static const std::filesystem::path& LogPath() {
+    static const std::filesystem::path Path = MR::ExeDir() / "Launcher.log";
+    return Path;
+}
+
 void InitLog() {
     std::ofstream LFS;
-    LFS.open(GetEP() + beammp_wide("Launcher.log"));
+    LFS.open(LogPath());
     if (!LFS.is_open()) {
         error("logger file init failed!");
     } else
@@ -45,13 +53,13 @@ void InitLog() {
 }
 void addToLog(const std::string& Line) {
     std::ofstream LFS;
-    LFS.open(GetEP() + beammp_wide("Launcher.log"), std::ios_base::app);
+    LFS.open(LogPath(), std::ios_base::app);
     LFS << Line.c_str();
     LFS.close();
 }
 void addToLog(const std::wstring& Line) {
     std::wofstream LFS;
-    LFS.open(GetEP() + beammp_wide("Launcher.log"), std::ios_base::app);
+    LFS.open(LogPath(), std::ios_base::app);
     LFS << Line.c_str();
     LFS.close();
 }

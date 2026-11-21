@@ -35,8 +35,6 @@ int main(int argc, const char** argv) try {
     th.detach();
 #endif
 
-    GetEP(Utils::ToWString(std::string(argv[0])).c_str());
-
     InitLog();
     ConfigInit();
     InitOptions(argc, argv, options);

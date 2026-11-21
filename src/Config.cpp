@@ -7,6 +7,7 @@
 #include "Logger.h"
 #include "Network/network.hpp"
 #include "MRIdentity.h"
+#include "MRPaths.h"
 #include "MRServers.h"
 #include "Options.h"
 #include "Startup.h"
@@ -23,7 +24,8 @@ std::string Username;
 // Credencial: nunca se registra ni se imprime. Solo la lee Auth() para armar la identidad.
 std::string InstallKey;
 nlohmann::json ConfiguredServers = nlohmann::json::array();
-std::filesystem::path CachingDirectory = std::filesystem::path("./Resources");
+// Carpeta de la cache de mods: se resuelve contra la carpeta del exe en ParseConfig.
+std::filesystem::path CachingDirectory;
 bool deleteDuplicateMods = false;
 // Cfg `Transport: "tcp"`: cada sesion de server arranca ya en el fallback a TCP.
 bool ForceTcpTransport = false;
@@ -53,10 +55,12 @@ void ParseConfig(const nlohmann::json& d) {
     if (d.contains("Port") && d["Port"].is_number()) {
         options.port = d["Port"].get<int>();
     }
-    if (d.contains("CachingDirectory") && d["CachingDirectory"].is_string()) {
-        CachingDirectory = std::filesystem::path(d["CachingDirectory"].get<std::string>());
-        info(beammp_wide("Mod caching directory: ") + beammp_fs_string(CachingDirectory.relative_path()));
-    }
+    // Relativa (o ausente) cuelga de la carpeta del exe, no del directorio de trabajo.
+    const std::string Configured = d.contains("CachingDirectory") && d["CachingDirectory"].is_string()
+        ? d["CachingDirectory"].get<std::string>()
+        : std::string();
+    CachingDirectory = MR::ResolveCacheDir(GetBP(), Configured);
+    info("Mod caching directory: " + MR::PathToUtf8(CachingDirectory));
 
     if (d.contains("Dev") && d["Dev"].is_boolean()) {
         bool dev = d["Dev"].get<bool>();
