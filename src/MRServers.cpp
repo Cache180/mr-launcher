@@ -79,6 +79,10 @@ namespace {
 
 }
 
+std::string TruncateServerField(const std::string& Text, std::size_t) {
+    return Text;
+}
+
 bool IsValidServerCfg(const Json& Cfg) {
     if (!Cfg.is_object()) {
         return false;

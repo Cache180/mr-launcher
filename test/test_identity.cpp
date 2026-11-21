@@ -730,3 +730,45 @@ TEST_CASE("LoadOrCreateIdentity: al arrancar borra el temporal viejo de una ejec
     CHECK(CountTmpFiles(Dir.Path()) == 0);
     CHECK(MR::IsValidInstallKey(ReadJson(Dir.Cfg())["Install"].get<std::string>()));
 }
+
+// ---- H3: un cfg sin Install no es un cfg danado ----
+
+TEST_CASE("H3: un cfg objeto sin Install es un cfg nuevo: se genera la clave, se conservan las demas claves y no hay .corrupt") {
+    TempDir Dir;
+    WriteAll(Dir.Cfg(), R"({"Port":4444,"Name":"PilotoA","Servers":[{"name":"MR","ip":"servidor.ejemplo","port":4464}],"Extra":7})");
+    const MR::LauncherIdentity Id = MR::LoadOrCreateIdentity(Dir.Cfg());
+    CHECK(IsHex48(Id.Install));
+    CHECK(Id.Name == "PilotoA");
+    CHECK_FALSE(fs::exists(CorruptOf(Dir.Cfg())));
+    CheckValidCfg(Dir.Cfg());
+    const nlohmann::json D = ReadJson(Dir.Cfg());
+    CHECK(D["Port"] == 4444);
+    CHECK(D["Extra"] == 7);
+    REQUIRE(D["Servers"].size() == 1);
+    CHECK(D["Servers"][0]["ip"] == "servidor.ejemplo");
+}
+
+TEST_CASE("H3: la clave generada se conserva en el arranque siguiente") {
+    TempDir Dir;
+    WriteAll(Dir.Cfg(), R"({"Name":"PilotoA","Servers":[]})");
+    const std::string First = MR::LoadOrCreateIdentity(Dir.Cfg()).Install;
+    CHECK(IsHex48(First));
+    CHECK(MR::LoadOrCreateIdentity(Dir.Cfg()).Install == First);
+    CHECK_FALSE(fs::exists(CorruptOf(Dir.Cfg())));
+}
+
+TEST_CASE("H3: lo que no se puede leer como objeto o trae un Install invalido sigue yendo a .corrupt") {
+    const std::string Cases[] = {
+        "{roto",
+        "[1,2,3]",
+        R"({"Install":"corta","Name":"PilotoA"})",
+        R"({"Install":12345,"Name":"PilotoA"})",
+    };
+    for (const std::string& Old : Cases) {
+        TempDir Dir;
+        WriteAll(Dir.Cfg(), Old);
+        CHECK(IsHex48(MR::LoadOrCreateIdentity(Dir.Cfg()).Install));
+        REQUIRE(fs::exists(CorruptOf(Dir.Cfg())));
+        CHECK(ReadAll(CorruptOf(Dir.Cfg())) == Old);
+    }
+}

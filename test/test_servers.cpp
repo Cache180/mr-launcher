@@ -265,3 +265,46 @@ TEST_CASE("MR::BuildServerListWith: la salida es JSON valido aunque el server ma
     REQUIRE_NOTHROW(List = json::parse(MR::BuildServerListWith(Servers, Query)));
     CHECK(List[0]["sname"] == "Bien");
 }
+
+TEST_CASE("MR::MaxServerFieldChars: 256") {
+    CHECK(MR::MaxServerFieldChars == 256);
+}
+
+TEST_CASE("MR::BuildServerEntry: nombre, mapa, descripcion y version de 10000 caracteres quedan en 256") {
+    const std::string Long(10000, 'x');
+    json Info = { { "name", Long }, { "map", Long }, { "desc", Long }, { "version", Long } };
+    json Entry = MR::BuildServerEntry(CfgEntry(), Info.dump());
+    CHECK(Entry["sname"].get<std::string>() == std::string(256, 'x'));
+    CHECK(Entry["map"].get<std::string>() == std::string(256, 'x'));
+    CHECK(Entry["sdesc"].get<std::string>() == std::string(256, 'x'));
+    CHECK(Entry["version"].get<std::string>() == std::string(256, 'x'));
+}
+
+TEST_CASE("MR::BuildServerEntry: un nombre del cfg desmesurado tambien se recorta") {
+    json Cfg = CfgEntry();
+    Cfg["name"] = std::string(10000, 'y');
+    json Entry = MR::BuildServerEntry(Cfg, "");
+    CHECK(Entry["sname"].get<std::string>() == std::string(256, 'y'));
+}
+
+TEST_CASE("MR::BuildServerEntry: un campo dentro del limite no cambia") {
+    json Info = { { "name", std::string(256, 'z') }, { "map", "/levels/gridmap_v2/info.json" } };
+    json Entry = MR::BuildServerEntry(CfgEntry(), Info.dump());
+    CHECK(Entry["sname"].get<std::string>() == std::string(256, 'z'));
+    CHECK(Entry["map"] == "/levels/gridmap_v2/info.json");
+}
+
+TEST_CASE("MR::TruncateServerField: no parte una secuencia UTF-8 y cuenta caracteres") {
+    // "\xC3\xB1" = n con tilde (2 bytes, 1 caracter)
+    std::string Text;
+    for (int I = 0; I < 300; ++I) {
+        Text += "\xC3\xB1";
+    }
+    const std::string Cut = MR::TruncateServerField(Text);
+    CHECK(Cut.size() == 512);
+    CHECK(Cut == Text.substr(0, 512));
+    CHECK(MR::TruncateServerField(Text, 3) == "\xC3\xB1\xC3\xB1\xC3\xB1");
+    CHECK(MR::TruncateServerField("", 3) == "");
+    CHECK(MR::TruncateServerField("abc", 3) == "abc");
+    CHECK(MR::TruncateServerField("abcd", 3) == "abc");
+}

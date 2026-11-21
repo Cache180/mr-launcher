@@ -20,4 +20,11 @@ inline constexpr std::int32_t MaxFrameBytes = 100 * 1024 * 1024;
 // negativa, vacia o desmesurada no se reserva: se cierra la conexion.
 bool IsSaneFrameLength(std::int32_t Header);
 
+// Tamano maximo de un mod que un server puede declarar (512 MiB). Decision D4.
+inline constexpr std::uint64_t MaxModBytes = 536'870'912;
+
+// true solo para un tamano entre 1 y MaxModBytes. Un mod que declara 0 o mas que el
+// tope se rechaza antes de reservar memoria.
+bool IsSaneModSize(std::uint64_t Size);
+
 }

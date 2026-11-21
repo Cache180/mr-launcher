@@ -24,3 +24,15 @@ TEST_CASE("MR::IsSaneFrameLength: solo 1..MaxFrameBytes") {
 TEST_CASE("MR::MaxFrameBytes: 100 MiB") {
     CHECK(MR::MaxFrameBytes == 100 * 1024 * 1024);
 }
+
+TEST_CASE("MR::MaxModBytes: 512 MiB") {
+    CHECK(MR::MaxModBytes == 512ull * 1024 * 1024);
+}
+
+TEST_CASE("MR::IsSaneModSize: solo 1..MaxModBytes") {
+    CHECK_FALSE(MR::IsSaneModSize(0));
+    CHECK(MR::IsSaneModSize(1));
+    CHECK(MR::IsSaneModSize(MR::MaxModBytes));
+    CHECK_FALSE(MR::IsSaneModSize(MR::MaxModBytes + 1));
+    CHECK_FALSE(MR::IsSaneModSize(std::numeric_limits<std::uint64_t>::max()));
+}

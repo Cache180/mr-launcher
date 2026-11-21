@@ -22,6 +22,13 @@ namespace MR {
 // Mas entradas que esta no se consultan (cada una usa un hilo).
 constexpr std::size_t MaxServers = 64;
 
+// Largo maximo, en caracteres, de los textos que llegan de un server (nombre, mapa,
+// descripcion y version): lo que pase se recorta.
+inline constexpr std::size_t MaxServerFieldChars = 256;
+
+// Recorta Text a Max caracteres UTF-8 sin partir una secuencia multibyte.
+std::string TruncateServerField(const std::string& Text, std::size_t Max = MaxServerFieldChars);
+
 // {name?, ip, port}: ip es un host o IPv4 (letras, digitos, '.', '-', '_'; 1-253
 // caracteres), port un entero 1-65535 y name, si esta, una cadena.
 bool IsValidServerCfg(const nlohmann::json& Cfg);
