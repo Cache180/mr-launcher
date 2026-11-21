@@ -456,7 +456,59 @@ namespace detail {
 
 }
 
+namespace {
+
+    // <cfg>.<pid>.tmp: el nombre del cfg, un punto, uno o mas digitos y ".tmp", nada mas.
+    bool IsConfigTempName(const std::string& Name, const std::string& CfgName) {
+        const std::string Prefix = CfgName + ".";
+        const std::string Suffix = ".tmp";
+        if (Name.size() <= Prefix.size() + Suffix.size() || Name.compare(0, Prefix.size(), Prefix) != 0
+            || Name.compare(Name.size() - Suffix.size(), Suffix.size(), Suffix) != 0) {
+            return false;
+        }
+        for (std::size_t I = Prefix.size(); I < Name.size() - Suffix.size(); ++I) {
+            if (Name[I] < '0' || Name[I] > '9') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+}
+
+std::size_t RemoveStaleConfigTemps(const fs::path& CfgFile, std::chrono::seconds MinAge) {
+    std::size_t Removed = 0;
+    try {
+        const fs::path Dir = CfgFile.has_parent_path() ? CfgFile.parent_path() : fs::path(".");
+        const auto CfgName = CfgFile.filename().string();
+        const auto Now = fs::file_time_type::clock::now();
+        std::error_code Ec;
+        for (fs::directory_iterator It(Dir, Ec), End; !Ec && It != End; It.increment(Ec)) {
+            try {
+                std::error_code EntryEc;
+                // string() puede lanzar con un nombre fuera de la pagina ANSI: ese archivo no es nuestro.
+                if (!It->is_regular_file(EntryEc) || EntryEc || !IsConfigTempName(It->path().filename().string(), CfgName)) {
+                    continue;
+                }
+                const auto Written = fs::last_write_time(It->path(), EntryEc);
+                if (EntryEc || Now - Written < MinAge) {
+                    continue;
+                }
+                if (fs::remove(It->path(), EntryEc) && !EntryEc) {
+                    ++Removed;
+                }
+            } catch (...) {
+                // Se ignora esta entrada y se sigue con las demas.
+            }
+        }
+    } catch (...) {
+        // Limpieza de cortesia: un fallo aqui nunca debe impedir arrancar.
+    }
+    return Removed;
+}
+
 LauncherIdentity LoadOrCreateIdentity(const fs::path& CfgFile) {
+    RemoveStaleConfigTemps(CfgFile);
     return detail::LoadOrCreateIdentityWith(CfgFile, GenerateInstallKey);
 }
 

@@ -12,6 +12,8 @@
 //
 // La clave de instalacion es una credencial: nunca se registra ni se imprime.
 
+#include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <nlohmann/json_fwd.hpp>
@@ -56,6 +58,14 @@ std::string GenerateInstallKey();
 // Si no puede obtener una clave de instalacion (RNG caido) devuelve Install
 // vacio y NO escribe nada: el llamador debe tratarlo como error fatal.
 LauncherIdentity LoadOrCreateIdentity(const std::filesystem::path& CfgFile);
+
+// Borra los temporales de escritura que dejo una ejecucion caida entre escribir y renombrar:
+// archivos regulares con el patron exacto <nombre del cfg>.<pid>.tmp (pid = solo digitos) junto
+// al cfg, con mas de MinAge sin modificarse (uno mas reciente puede ser de otro launcher que
+// esta escribiendo ahora). Contienen la clave de instalacion: no se lee ni se registra su
+// contenido. Nunca toca el cfg, su .corrupt ni nada que no encaje; nunca lanza.
+// Devuelve cuantos borro.
+std::size_t RemoveStaleConfigTemps(const std::filesystem::path& CfgFile, std::chrono::seconds MinAge = std::chrono::seconds(60));
 
 // Valida y guarda el nombre. Si es invalido deja Reason y no toca el archivo.
 bool SetPilotName(const std::filesystem::path& CfgFile, std::string_view Name, std::string& Reason);
