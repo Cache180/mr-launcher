@@ -70,4 +70,60 @@ std::string TransportJson(Transport Current) {
     return Current == Transport::Tcp ? R"({"transport":"tcp"})" : R"({"transport":"udp"})";
 }
 
+bool UseSendLarge(std::string_view Data, bool Rel, Transport Current) {
+    const bool Ack = Data.size() > 3 && (Data.front() == 'O' || Data.front() == 'T');
+    if (Ack || Data.size() > 1000) {
+        return true;
+    }
+    // Solo por el fallback: lo que habria ido por UDP conserva el encuadre de UDPSend.
+    return Current == Transport::Tcp && !ShouldSendOverTcp(Data, Rel, Transport::Udp);
+}
+
+std::uint64_t TransportSession::Begin(bool ForceTcp, TimePoint Now) {
+    std::scoped_lock Guard(mGate);
+    mMonitor = std::make_unique<TransportMonitor>(ForceTcp);
+    mMonitor->OnUdpStarted(Now);
+    mUdpAnnounced = false;
+    return ++mGeneration;
+}
+
+void TransportSession::End(std::uint64_t Generation) {
+    std::scoped_lock Guard(mGate);
+    if (Generation == mGeneration) {
+        mMonitor.reset();
+    }
+}
+
+bool TransportSession::OnUdpPacket(std::uint64_t Generation, TimePoint Now) {
+    std::scoped_lock Guard(mGate);
+    if (!mMonitor || Generation != mGeneration) {
+        return false;
+    }
+    mMonitor->OnUdpPacket(Now);
+    if (mUdpAnnounced || mMonitor->Current() == Transport::Tcp) {
+        return false;
+    }
+    mUdpAnnounced = true;
+    return true;
+}
+
+bool TransportSession::TickAndAnnounce(TimePoint Now, const std::function<void()>& SendFt) {
+    std::scoped_lock Guard(mGate);
+    if (!mMonitor || !mMonitor->Tick(Now)) {
+        return false;
+    }
+    SendFt();
+    return true;
+}
+
+Transport TransportSession::Current() const {
+    std::scoped_lock Guard(mGate);
+    return mMonitor ? mMonitor->Current() : Transport::Udp;
+}
+
+TransportSession& ActiveTransport() {
+    static TransportSession Instance;
+    return Instance;
+}
+
 }

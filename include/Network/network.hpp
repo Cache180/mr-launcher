@@ -51,6 +51,9 @@ std::string TCPRcv(uint64_t Sock);
 void SyncResources(uint64_t TCPSock);
 std::string GetAddr(const std::string& IP);
 void ServerParser(std::string_view Data);
+// Fallback a TCP (MRTransport): tick del monitor y bandera del cfg `Transport: "tcp"`.
+void TransportTick();
+extern bool ForceTcpTransport;
 void TCPSend(const std::string& Data, uint64_t Sock);
 void TCPClientMain(const std::string& IP, int Port);
 void UDPClientMain(const std::string& IP, int Port);

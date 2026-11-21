@@ -20,7 +20,10 @@
 #endif
 
 #include "Logger.h"
+#include "MRTransport.h"
 #include <array>
+#include <chrono>
+#include <cstdint>
 #include <string>
 
 SOCKET UDPSock = -1;
@@ -61,7 +64,7 @@ void UDPParser(std::string_view Packet) {
         ServerParser(Packet);
     }
 }
-void UDPRcv() {
+void UDPRcv(std::uint64_t Generation) {
     sockaddr_in FromServer {};
 #if defined(_WIN32)
     int clientLength = sizeof(FromServer);
@@ -73,8 +76,11 @@ void UDPRcv() {
     if (UDPSock == -1)
         return;
     int32_t Rcv = recvfrom(UDPSock, Ret.data(), Ret.size() - 1, 0, (sockaddr*)&FromServer, &clientLength);
+    // Error o espera agotada (1 s sin datagrama): no es un fallo; el bucle vuelve a mirar Terminate.
     if (Rcv == SOCKET_ERROR)
         return;
+    if (MR::ActiveTransport().OnUdpPacket(Generation, std::chrono::steady_clock::now()))
+        info("Conexion: UDP");
     Ret[Rcv] = 0;
     UDPParser(std::string_view(Ret.data(), Rcv));
 }
@@ -93,17 +99,34 @@ void UDPClientMain(const std::string& IP, int Port) {
     ToServer->sin_port = htons(Port);
     inet_pton(AF_INET, IP.c_str(), &ToServer->sin_addr);
     UDPSock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (!magic.empty())
+    // Espera de recepcion de 1 s: el bucle no queda bloqueado para siempre si no llega nada
+    // y puede terminar al cerrarse la sesion aunque nadie cierre el socket.
+#if defined(_WIN32)
+    DWORD RcvTimeout = 1000;
+#else
+    timeval RcvTimeout { 1, 0 };
+#endif
+    if (setsockopt(UDPSock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&RcvTimeout), sizeof(RcvTimeout)) != 0)
+        warn("No se pudo fijar la espera de recepcion UDP: " + std::to_string(WSAGetLastError()));
+    // Un monitor por sesion (nace limpio; solo el cfg decide si arranca forzado a TCP).
+    // Con Transport "tcp" el primer tick pasa a TCP ya (Ft antes que cualquier otro envio)
+    // y no se manda nada por UDP.
+    const std::uint64_t Generation = MR::ActiveTransport().Begin(ForceTcpTransport, std::chrono::steady_clock::now());
+    TransportTick();
+    const bool UdpUsable = MR::ActiveTransport().Current() == MR::Transport::Udp;
+    if (UdpUsable && !magic.empty())
         for (int i = 0; i < 10; i++)
             UDPSend(magic);
     GameSend("P" + std::to_string(ClientID));
     TCPSend("H", TCPSock);
-    UDPSend("p");
+    if (UdpUsable)
+        UDPSend("p");
     debug("Starting UDP receive loop");
     while (!Terminate) {
-        UDPRcv();
+        UDPRcv(Generation);
     }
     debug("UDP receive loop done");
+    MR::ActiveTransport().End(Generation);
     KillSocket(UDPSock);
     WSACleanup();
 }

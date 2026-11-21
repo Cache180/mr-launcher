@@ -22,6 +22,7 @@
 #endif
 
 #include "Logger.h"
+#include "MRTransport.h"
 #include "Options.h"
 #include <charconv>
 #include <mutex>
@@ -71,18 +72,14 @@ void ServerSend(std::string Data, bool Rel) {
         abort();
     }
     char C = 0;
-    bool Ack = false;
     int DLen = int(Data.length());
     if (DLen > 3)
         C = Data.at(0);
-    if (C == 'O' || C == 'T')
-        Ack = true;
-    if (C == 'N' || C == 'W' || C == 'Y' || C == 'V' || C == 'E' || C == 'C')
-        Rel = true;
-    if (compressBound(Data.size()) > 1024)
-        Rel = true;
-    if (Ack || Rel) {
-        if (Ack || DLen > 1000)
+    // La decision UDP/TCP vive en MRTransport (probada en CI): con UDP sano reproduce la
+    // regla de siempre; tras el fallback (Ft enviado) todo va por TCP.
+    const MR::Transport Mode = MR::ActiveTransport().Current();
+    if (MR::ShouldSendOverTcp(Data, Rel, Mode)) {
+        if (MR::UseSendLarge(Data, Rel, Mode))
             SendLarge(Data);
         else
             TCPSend(Data, TCPSock);
@@ -171,8 +168,19 @@ SOCKET SetupListener() {
     }
     return GSocket;
 }
+// Un tick del monitor de transporte (1 Hz desde AutoPing; ademas, al arrancar el canal UDP).
+// Al pasar a TCP envia `Ft` con un envio TCP propio (2 bytes: ShouldSendOverTcp no lo
+// encaminaria por TCP) y TickAndAnnounce lo hace antes de que nadie vea Transport::Tcp.
+void TransportTick() {
+    MR::ActiveTransport().TickAndAnnounce(std::chrono::steady_clock::now(), [] {
+        TCPSend("Ft", TCPSock);
+        info("Conexion: TCP (UDP bloqueado)");
+    });
+}
+
 void AutoPing() {
     while (!Terminate) {
+        TransportTick();
         ServerSend("p", false);
         PingStart = std::chrono::high_resolution_clock::now();
         std::this_thread::sleep_for(std::chrono::seconds(1));

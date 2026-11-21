@@ -25,6 +25,8 @@ std::string InstallKey;
 nlohmann::json ConfiguredServers = nlohmann::json::array();
 std::filesystem::path CachingDirectory = std::filesystem::path("./Resources");
 bool deleteDuplicateMods = false;
+// Cfg `Transport: "tcp"`: cada sesion de server arranca ya en el fallback a TCP.
+bool ForceTcpTransport = false;
 
 // Servers del cfg: se omiten (con aviso) las entradas que no sean {name, ip, port}
 // validas y las que pasen de MR::MaxServers.
@@ -96,4 +98,9 @@ void ConfigInit() {
     Username = Identity.Name;
     InstallKey = Identity.Install;
     ParseConfig(d);
+    // Solo lectura: el valor ya viene reparado ("auto" o "tcp") por MR::LoadOrCreateIdentity.
+    ForceTcpTransport = MR::ForceTcpFromConfig(d);
+    if (ForceTcpTransport) {
+        info("Transporte forzado a TCP por configuracion");
+    }
 }

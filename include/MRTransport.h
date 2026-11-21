@@ -13,6 +13,9 @@
 // Un monitor por sesion: una vez que pasa a TCP no vuelve a UDP.
 
 #include <chrono>
+#include <cstdint>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -60,5 +63,44 @@ bool ShouldSendOverTcp(std::string_view Data, bool Rel, Transport Current);
 
 // {"transport":"udp"} / {"transport":"tcp"}
 std::string TransportJson(Transport Current);
+
+// Una vez elegido TCP (ShouldSendOverTcp), decide entre SendLarge (true) y TCPSend (false).
+// Regla de hoy: SendLarge si es ack (O/T con mas de 3 bytes) o mide mas de 1000 bytes.
+// Ademas, con Transport::Tcp, lo que sin el fallback habria ido por UDP usa SendLarge: asi
+// lleva el mismo encuadre que UDPSend (comprimido con ABG: si pasa de 400 bytes), que el
+// server acepta por TCP tras autenticar.
+bool UseSendLarge(std::string_view Data, bool Rel, Transport Current);
+
+// Monitor de la sesion activa del launcher, accesible desde los hilos que intervienen
+// (recepcion UDP, ping, emisores y proxy HTTP). Todo el estado vive tras un unico candado,
+// asi que no escapa ningun puntero: no hay uso-tras-liberar al terminar una sesion.
+class TransportSession {
+public:
+    using TimePoint = TransportMonitor::TimePoint;
+
+    // Empieza una sesion nueva (descarta por completo la anterior, incluido su TCP) y
+    // arranca su canal UDP. Devuelve la generacion, que identifica a quien la abrio.
+    std::uint64_t Begin(bool ForceTcp, TimePoint Now);
+    // Cierra la sesion si Generation sigue siendo la activa; si ya hay otra mas nueva, no hace nada.
+    void End(std::uint64_t Generation);
+    // Llego un datagrama UDP del server. true solo para el primero de la sesion mientras
+    // siga en UDP (el llamador registra "Conexion: UDP"). Una generacion vieja se ignora.
+    bool OnUdpPacket(std::uint64_t Generation, TimePoint Now);
+    // Tick del monitor. Si hay que pasar a TCP, llama a SendFt (envio de Ft por TCP) SIN soltar
+    // el candado: quien consulte Current() espera a que Ft haya salido, asi ningun paquete
+    // se encamina por TCP antes que Ft. true solo en el instante del cambio. Sin sesion: false.
+    bool TickAndAnnounce(TimePoint Now, const std::function<void()>& SendFt);
+    // Sin sesion activa: Udp.
+    Transport Current() const;
+
+private:
+    mutable std::mutex mGate;
+    std::unique_ptr<TransportMonitor> mMonitor;
+    std::uint64_t mGeneration = 0;
+    bool mUdpAnnounced = false;
+};
+
+// Instancia unica del launcher (una sesion de server a la vez).
+TransportSession& ActiveTransport();
 
 }
