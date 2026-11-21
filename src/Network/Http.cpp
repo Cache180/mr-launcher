@@ -29,7 +29,7 @@ void HTTP::StartProxy() {
         // El juego se crea con herencia de handles: el socket de escucha no debe heredarse (el puerto
         // seguiria ocupado aunque el launcher muriera). Reemplaza las opciones por defecto de httplib
         // (SO_REUSEADDR), que en un puerto aleatorio de 127.0.0.1 no hacen falta.
-        HTTPProxy.set_socket_options([](httplib::socket_t Sock) {
+        HTTPProxy.set_socket_options([](auto Sock) {
             MakeSocketNonInheritable(static_cast<std::uint64_t>(Sock));
         });
 
