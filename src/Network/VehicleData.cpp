@@ -104,14 +104,19 @@ void UDPClientMain(const std::string& IP, int Port) {
     }
 #endif
 
-    // Begin va ANTES de crear el socket UDP y ToServer: en modo forzado AutoPing ya ve TCP
-    // cuando empieza a enviar y no puede mandar un `p` por UDP en ninguna ventana previa.
+    // Nada heredado de una sesion anterior: con UDPSock en -1 UDPSend/UDPRcv no hacen nada.
+    UDPSock = -1;
+    delete ToServer;
+    ToServer = nullptr;
+    // Begin va ANTES de crear el socket UDP y ToServer, y estos solo se crean si la sesion usa
+    // UDP: en modo forzado nunca existen, asi que ni un `p` de AutoPing que ya hubiera decidido
+    // "Udp" antes de Begin puede salir por UDP.
     // Un monitor por sesion (nace limpio; solo el cfg decide si arranca forzado a TCP).
     // Forzado: Begin pasa a TCP bajo su propio candado (Ft antes que cualquier otro envio) y
     // UdpUsed es false: no se manda ni se recibe nada por UDP en toda la sesion.
     const auto Session = MR::ActiveTransport().Begin(ForceTcpTransport, std::chrono::steady_clock::now(), SendTransportFt);
     const std::uint64_t Generation = Session.Generation;
-    delete ToServer;
+    if (Session.UdpUsed) {
     ToServer = new sockaddr_in;
     ToServer->sin_family = AF_INET;
     ToServer->sin_port = htons(Port);
@@ -126,6 +131,7 @@ void UDPClientMain(const std::string& IP, int Port) {
 #endif
     if (setsockopt(UDPSock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&RcvTimeout), sizeof(RcvTimeout)) != 0)
         warn("No se pudo fijar la espera de recepcion UDP: " + std::to_string(WSAGetLastError()));
+    }
     if (Session.UdpUsed && !magic.empty())
         for (int i = 0; i < 10; i++)
             UDPSend(magic);

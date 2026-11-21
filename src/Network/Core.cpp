@@ -284,6 +284,12 @@ void GameHandler(SOCKET Client) {
     } while (true);
     debug("(Core) Connection closing");
     NetReset();
+    {
+        // Solo sendMutex (el que toma CoreSend): una consulta asincrona que termine despues no
+        // escribe en un descriptor cerrado ni reutilizado; CoreSend ignora CoreSocket == -1.
+        std::lock_guard lock(sendMutex);
+        CoreSocket = -1;
+    }
     KillSocket(Client);
 }
 void localRes() {

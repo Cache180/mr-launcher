@@ -144,7 +144,15 @@ std::vector<char> TCPRcvRaw(SOCKET Sock, uint64_t& GRcv, uint64_t Size) {
         UUl("Invalid Socket");
         return {};
     }
-    std::vector<char> File(Size);
+    std::vector<char> File;
+    try {
+        File.resize(Size);
+    } catch (const std::exception&) {
+        // Tamano declarado por el server imposible de reservar: fallo limpio, no un cierre del launcher.
+        Terminate = true;
+        UUl("respuesta invalida del servidor");
+        return {};
+    }
     uint64_t Rcv = 0;
 
     auto start = std::chrono::high_resolution_clock::now();
@@ -529,9 +537,13 @@ void NewSyncResources(SOCKET Sock, const std::string& Mods, const std::vector<Mo
             TCPSend("f" + ModInfoIter->FileName, Sock);
 
             std::string Data = TCPRcv(Sock);
-            if (Data == "CO" || Terminate) {
+            if (Data == "CO") {
                 Terminate = true;
                 UUl("Server cannot find " + FName);
+                break;
+            }
+            if (Terminate) {
+                // La recepcion fallo: el estado ya lo dejo quien fallo (p. ej. trama invalida).
                 break;
             }
 
@@ -675,7 +687,15 @@ void SyncResources(SOCKET Sock, const MR::LauncherIdentity& Identity) {
             continue;
         }
         Pos++;
-        auto FileSize = std::stoull(*FS);
+        unsigned long long FileSize = 0;
+        try {
+            FileSize = std::stoull(*FS);
+        } catch (const std::exception&) {
+            // Tamano ilegible o desbordado: respuesta invalida, no una excepcion en un hilo suelto.
+            Terminate = true;
+            UUl("respuesta invalida del servidor");
+            break;
+        }
         if (fs::exists(PathToSaveTo)) {
             if (FS->find_first_not_of("0123456789") != std::string::npos)
                 continue;
@@ -716,9 +736,13 @@ void SyncResources(SOCKET Sock, const MR::LauncherIdentity& Identity) {
             TCPSend("f" + *FN, Sock);
 
             std::string Data = TCPRcv(Sock);
-            if (Data == "CO" || Terminate) {
+            if (Data == "CO") {
                 Terminate = true;
                 UUl("Server cannot find " + FName);
+                break;
+            }
+            if (Terminate) {
+                // La recepcion fallo: el estado ya lo dejo quien fallo (p. ej. trama invalida).
                 break;
             }
 

@@ -80,7 +80,13 @@ fs::path GetBP(const beammp_fs_char* P) {
 #else
     fspath = beammp_fs_string(P);
 #endif
-    fspath = fs::weakly_canonical(fspath.string() + "/..");
+    // parent_path (no string + "/.."): sin conversion a cadena estrecha, que lanza con rutas
+    // fuera de la pagina de codigos ANSI.
+    try {
+        fspath = fs::weakly_canonical(fspath.parent_path());
+    } catch (const std::exception&) {
+        fatal("No se pudo determinar la carpeta del launcher (ruta demasiado larga?)");
+    }
 #if defined(_WIN32)
     return fspath.wstring();
 #else

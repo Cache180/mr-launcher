@@ -177,7 +177,7 @@ namespace {
 
     // Renombra Tmp sobre File reemplazando el destino; en Windows con WRITE_THROUGH
     // (no vuelve hasta que el renombrado esta en disco).
-    bool ReplaceFile(const fs::path& Tmp, const fs::path& File) {
+    bool RenameOverDestination(const fs::path& Tmp, const fs::path& File) {
 #ifdef _WIN32
         return MoveFileExW(Tmp.c_str(), File.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
@@ -410,7 +410,7 @@ namespace detail {
                     return false;
                 }
             }
-            if (!SyncFileToDisk(Tmp) || !ReplaceFile(Tmp, File)) {
+            if (!SyncFileToDisk(Tmp) || !RenameOverDestination(Tmp, File)) {
                 fs::remove(Tmp, Ec);
                 return false;
             }
