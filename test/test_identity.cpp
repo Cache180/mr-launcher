@@ -648,3 +648,11 @@ TEST_CASE("Escritura del cfg: no queda ningun *.tmp tras crear, reparar y guarda
     REQUIRE(MR::ClearPilotName(Dir.Cfg(), Reason));
     CHECK(CountTmpFiles(Dir.Path()) == 0);
 }
+
+TEST_CASE("PathToUtf8: una ruta fuera de la pagina ANSI se convierte a UTF-8 sin lanzar") {
+    const fs::path P = fs::path(u8"C:/Muertazos_\u00f1_\u65e5\u672c/MR-Launcher.cfg");
+    std::string Out;
+    REQUIRE_NOTHROW(Out = MR::PathToUtf8(P));
+    CHECK(Out.find("Muertazos_\xc3\xb1_\xe6\x97\xa5\xe6\x9c\xac") != std::string::npos);
+    CHECK(MR::PathToUtf8(fs::path("MR-Launcher.cfg")) == "MR-Launcher.cfg");
+}
