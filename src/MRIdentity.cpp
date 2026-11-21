@@ -53,6 +53,15 @@ namespace {
         return Port >= 1 && Port <= 65535;
     }
 
+    constexpr const char* TransportAuto = "auto";
+    constexpr const char* TransportTcp = "tcp";
+
+    // "Transport": "auto" o "tcp"; cualquier otra cosa (incluido otro tipo JSON) es invalida.
+    template <typename BasicJson>
+    bool IsValidTransportValue(const BasicJson& Value) {
+        return Value.is_string() && (Value.template get_ref<const std::string&>() == TransportAuto || Value.template get_ref<const std::string&>() == TransportTcp);
+    }
+
     enum class ReadKind {
         Missing, // el archivo no existe: se crea
         Unreadable, // existe pero no se pudo leer ahora: NO se escribe nada
@@ -202,6 +211,11 @@ namespace {
             Doc["Servers"] = Json::array();
             Changed = true;
         }
+        auto Transport = Doc.find("Transport");
+        if (Transport == Doc.end() || !IsValidTransportValue(*Transport)) {
+            Doc["Transport"] = TransportAuto;
+            Changed = true;
+        }
         auto Install = Doc.find("Install");
         if (Install == Doc.end() || !Install->is_string() || !IsValidInstallKey(Install->get_ref<const std::string&>())) {
             std::string Key = Generate();
@@ -285,6 +299,25 @@ namespace {
         }
     }
 
+}
+
+namespace {
+    template <typename BasicJson>
+    bool ForceTcpImpl(const BasicJson& Doc) {
+        if (!Doc.is_object()) {
+            return false;
+        }
+        const auto Transport = Doc.find("Transport");
+        return Transport != Doc.end() && Transport->is_string() && Transport->template get_ref<const std::string&>() == TransportTcp;
+    }
+}
+
+bool ForceTcpFromConfig(const nlohmann::json& Doc) {
+    return ForceTcpImpl(Doc);
+}
+
+bool ForceTcpFromConfig(const nlohmann::ordered_json& Doc) {
+    return ForceTcpImpl(Doc);
 }
 
 bool IsValidPilotName(std::string_view Name) {
