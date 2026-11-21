@@ -48,6 +48,7 @@ option(MR_BUILD_TESTS "Compilar MR-Launcher-tests" ON)
 if (MR_BUILD_TESTS)
     find_package(doctest CONFIG REQUIRED)
     find_package(OpenSSL REQUIRED)
+    find_package(ZLIB REQUIRED)
     add_executable(MR-Launcher-tests
             test/test_main.cpp
             test/test_identity.cpp
@@ -55,14 +56,16 @@ if (MR_BUILD_TESTS)
             test/test_mods.cpp
             test/test_channel.cpp
             test/test_handshake.cpp
+            test/test_transport.cpp
             src/MRIdentity.cpp
             src/MRServers.cpp
             src/MRMods.cpp
             src/MRChannel.cpp
-            src/MRHandshake.cpp)
+            src/MRHandshake.cpp
+            src/MRTransport.cpp)
     target_include_directories(MR-Launcher-tests PRIVATE "include")
     target_link_libraries(MR-Launcher-tests PRIVATE
-            doctest::doctest nlohmann_json::nlohmann_json OpenSSL::Crypto)
+            doctest::doctest nlohmann_json::nlohmann_json OpenSSL::Crypto ZLIB::ZLIB)
     if (WIN32)
         target_link_libraries(MR-Launcher-tests PRIVATE ws2_32 crypt32)
     endif()

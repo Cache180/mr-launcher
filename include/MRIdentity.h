@@ -14,6 +14,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <nlohmann/json_fwd.hpp>
 #include <string>
 #include <string_view>
 
@@ -61,6 +62,14 @@ bool ClearPilotName(const std::filesystem::path& CfgFile, std::string& Reason);
 
 // {"name":"...","install":"..."} (JSON UTF-8, <= 256 bytes con valores validos).
 std::string IdentityPacket(const LauncherIdentity& Identity);
+
+// Clave "Transport" del cfg: "auto" (por defecto; el launcher decide) o "tcp"
+// (fuerza el fallback a TCP desde el inicio). Cualquier otro valor se repara a "auto".
+// true solo si Doc["Transport"] es exactamente la cadena "tcp"; todo lo demas
+// (ausente, "auto", otras cadenas, no cadenas) da false. Acepta el JSON que tenga
+// el llamador (json u ordered_json).
+bool ForceTcpFromConfig(const nlohmann::json& Doc);
+bool ForceTcpFromConfig(const nlohmann::ordered_json& Doc);
 
 namespace detail {
     using KeyGenerator = std::function<std::string()>;

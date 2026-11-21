@@ -490,3 +490,99 @@ TEST_CASE("MR::ConfigPath: no depende del directorio de trabajo") {
     CHECK(FromThere.is_absolute());
     CHECK(FromThere.parent_path() == Exe.Path());
 }
+
+// --- Clave Transport ("auto" | "tcp") -------------------------------------------
+
+TEST_CASE("Transport: sin la clave se agrega como \"auto\" y Install queda intacto") {
+    TempDir Dir;
+    WriteAll(Dir.Cfg(), R"({"Port":4500,"Name":"PilotoA","Install":")" + ValidInstall + R"(","Extra":{"a":1}})");
+    MR::LauncherIdentity Id = MR::LoadOrCreateIdentity(Dir.Cfg());
+    CHECK(Id.Install == ValidInstall);
+    CHECK(Id.Name == "PilotoA");
+    nlohmann::json D = ReadJson(Dir.Cfg());
+    CHECK(D["Transport"] == "auto");
+    CHECK(D["Install"] == ValidInstall);
+    CHECK(D["Extra"]["a"] == 1);
+    CHECK(D["Port"] == 4500);
+    CHECK_FALSE(MR::ForceTcpFromConfig(D));
+}
+
+TEST_CASE("Transport: un cfg nuevo trae \"auto\"") {
+    TempDir Dir;
+    MR::LoadOrCreateIdentity(Dir.Cfg());
+    nlohmann::json D = ReadJson(Dir.Cfg());
+    CHECK(D["Transport"] == "auto");
+    CheckValidCfg(Dir.Cfg());
+}
+
+TEST_CASE("Transport: \"tcp\" se conserva y fuerza el fallback") {
+    TempDir Dir;
+    WriteAll(Dir.Cfg(), R"({"Transport":"tcp","Install":")" + ValidInstall + R"("})");
+    MR::LauncherIdentity Id = MR::LoadOrCreateIdentity(Dir.Cfg());
+    CHECK(Id.Install == ValidInstall);
+    nlohmann::json D = ReadJson(Dir.Cfg());
+    CHECK(D["Transport"] == "tcp");
+    CHECK(D["Install"] == ValidInstall);
+    CHECK(MR::ForceTcpFromConfig(D));
+    CHECK(MR::ForceTcpFromConfig(nlohmann::ordered_json::parse(R"({"Transport":"tcp"})")));
+}
+
+TEST_CASE("Transport: valores invalidos se reparan a \"auto\" sin tocar Install") {
+    const char* Invalid[] = { "7", "\"quic\"", "\"TCP\"", "\"\"", "null", "true", "[\"tcp\"]", "{\"a\":1}", "1.5" };
+    for (const char* Bad : Invalid) {
+        CAPTURE(Bad);
+        TempDir Dir;
+        WriteAll(Dir.Cfg(), std::string(R"({"Transport":)") + Bad + R"(,"Install":")" + ValidInstall + R"(","Extra":"x"})");
+        MR::LauncherIdentity Id = MR::LoadOrCreateIdentity(Dir.Cfg());
+        CHECK(Id.Install == ValidInstall);
+        nlohmann::json D = ReadJson(Dir.Cfg());
+        CHECK(D["Transport"] == "auto");
+        CHECK(D["Install"] == ValidInstall);
+        CHECK(D["Extra"] == "x");
+        CHECK_FALSE(MR::ForceTcpFromConfig(D));
+    }
+}
+
+TEST_CASE("Transport: un cfg completo y valido no se reescribe") {
+    for (const char* Mode : { "auto", "tcp" }) {
+        CAPTURE(Mode);
+        TempDir Dir;
+        WriteAll(Dir.Cfg(),
+            R"({"Port":4464,"Build":"Default","CachingDirectory":"./Resources","Name":"PilotoA","Servers":[],)"
+            R"("Install":")" + ValidInstall + R"(","Transport":")" + Mode + R"("})");
+        const std::string Before = ReadAll(Dir.Cfg());
+        MR::LauncherIdentity Id = MR::LoadOrCreateIdentity(Dir.Cfg());
+        CHECK(Id.Install == ValidInstall);
+        CHECK(ReadAll(Dir.Cfg()) == Before);
+    }
+}
+
+TEST_CASE("Transport: SetPilotName y ClearPilotName conservan la clave") {
+    TempDir Dir;
+    WriteAll(Dir.Cfg(), R"({"Transport":"tcp","Install":")" + ValidInstall + R"("})");
+    std::string Reason;
+    REQUIRE(MR::SetPilotName(Dir.Cfg(), "PilotoB", Reason));
+    CHECK(ReadJson(Dir.Cfg())["Transport"] == "tcp");
+    REQUIRE(MR::ClearPilotName(Dir.Cfg(), Reason));
+    CHECK(ReadJson(Dir.Cfg())["Transport"] == "tcp");
+    CHECK(ReadJson(Dir.Cfg())["Install"] == ValidInstall);
+}
+
+TEST_CASE("MR::ForceTcpFromConfig: solo la cadena \"tcp\" fuerza (json y ordered_json)") {
+    using nlohmann::json;
+    using nlohmann::ordered_json;
+    CHECK(MR::ForceTcpFromConfig(json { { "Transport", "tcp" } }));
+    CHECK(MR::ForceTcpFromConfig(ordered_json { { "Transport", "tcp" } }));
+    CHECK_FALSE(MR::ForceTcpFromConfig(json::object()));
+    CHECK_FALSE(MR::ForceTcpFromConfig(ordered_json::object()));
+    for (const char* Other : { "auto", "TCP", "udp", "quic", "" }) {
+        CAPTURE(Other);
+        CHECK_FALSE(MR::ForceTcpFromConfig(json { { "Transport", Other } }));
+        CHECK_FALSE(MR::ForceTcpFromConfig(ordered_json { { "Transport", Other } }));
+    }
+    CHECK_FALSE(MR::ForceTcpFromConfig(json { { "Transport", 7 } }));
+    CHECK_FALSE(MR::ForceTcpFromConfig(ordered_json { { "Transport", true } }));
+    CHECK_FALSE(MR::ForceTcpFromConfig(json { { "Transport", nullptr } }));
+    CHECK_FALSE(MR::ForceTcpFromConfig(json::array({ "tcp" })));
+    CHECK_FALSE(MR::ForceTcpFromConfig(json(nullptr)));
+}
