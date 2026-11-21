@@ -45,6 +45,9 @@ extern std::filesystem::path ConfigFile;
 extern nlohmann::json ConfiguredServers;
 extern std::string magic;
 int KillSocket(uint64_t Dead);
+// Que ningun proceso hijo herede el socket (el juego se crea con herencia de handles: si heredara
+// un socket de escucha, el puerto seguiria ocupado aunque el launcher muriera). No lanza.
+void MakeSocketNonInheritable(uint64_t Sock);
 void UUl(const std::string& R);
 void UDPSend(std::string Data);
 bool CheckBytes(int32_t Bytes, int32_t Expected = -1);

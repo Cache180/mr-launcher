@@ -133,7 +133,7 @@ void CoreSend(std::string data) {
 
 std::vector<std::future<void>> futures;
 
-void Parse(std::string Data, SOCKET CSocket) {
+void Parse(std::string Data) {
     std::erase_if(futures, [](const std::future<void>& f) {
         if (f.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             return true;
@@ -261,12 +261,10 @@ void Parse(std::string Data, SOCKET CSocket) {
         Data.clear();
         break;
     }
-    if (!Data.empty() && CSocket != -1) {
-        auto ToSend = Utils::PrependHeader(Data);
-        int res = send(CSocket, ToSend.data(), ToSend.size(), 0);
-        if (res < 0) {
-            debug("(Core) send failed with error: " + std::to_string(WSAGetLastError()));
-        }
+    // Por CoreSend (sendMutex): las respuestas asincronas (B, I) escriben en el mismo socket y dos
+    // escritores no deben entrelazar sus marcos. CoreSend toma solo sendMutex, sin anidar nada.
+    if (!Data.empty()) {
+        CoreSend(std::move(Data));
     }
     // El juego pregunta el ping ("Up") cada segundo: junto a la respuesta le decimos el transporte
     // (Utudp / Uttcp). Sin estado a proposito: la interfaz puede recargarse y lo recibe de nuevo.
@@ -286,7 +284,7 @@ void GameHandler(SOCKET Client) {
     do {
         try {
             Utils::ReceiveFromGame(Client, data);
-            Parse(std::string(data.data(), data.size()), Client);
+            Parse(std::string(data.data(), data.size()));
         } catch (const std::exception& e) {
             error(std::string("Error while receiving from game on core: ") + e.what());
             break;
@@ -351,6 +349,17 @@ bool CoreListen() {
         WSACleanup();
         return false;
     }
+    // El juego se crea con herencia de handles (CreateProcess): sin esto heredaria este socket de
+    // escucha y el puerto seguiria ocupado aunque el launcher muriera.
+    MakeSocketNonInheritable(LSocket);
+#ifdef _WIN32
+    // Puerto exclusivo: sin esto un bind a 127.0.0.1 tiene exito aunque otro proceso tenga el mismo
+    // puerto en 0.0.0.0, y el "puerto ocupado" solo detectaria a otro launcher MR. Este socket no
+    // usa SO_REUSEADDR (ni lo hace upstream), asi que no hay conflicto con ninguna otra opcion.
+    const int Exclusive = 1;
+    if (setsockopt(LSocket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&Exclusive), sizeof(Exclusive)) != 0)
+        debug("(Core) no se pudo fijar SO_EXCLUSIVEADDRUSE: " + std::to_string(WSAGetLastError()));
+#endif
     iRes = bind(LSocket, res->ai_addr, int(res->ai_addrlen));
     if (iRes == SOCKET_ERROR) {
         debug("(Core) bind failed with error: " + std::to_string(WSAGetLastError()));

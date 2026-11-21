@@ -16,6 +16,7 @@
 #include <arpa/inet.h>
 #include <cstring>
 #include <netdb.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -49,6 +50,18 @@ int KillSocket(uint64_t Dead) {
         warn("Failed to close socket!");
     }
     return a;
+}
+
+void MakeSocketNonInheritable(uint64_t Sock) {
+    if (Sock == (SOCKET)-1)
+        return;
+#if defined(_WIN32)
+    if (!SetHandleInformation(reinterpret_cast<HANDLE>(Sock), HANDLE_FLAG_INHERIT, 0))
+        warn("No se pudo marcar un socket como no heredable: " + std::to_string(GetLastError()));
+#else
+    if (fcntl(static_cast<int>(Sock), F_SETFD, FD_CLOEXEC) != 0)
+        warn("No se pudo marcar un socket como no heredable: " + std::to_string(errno));
+#endif
 }
 
 void GameSend(std::string_view Data) {
@@ -151,6 +164,7 @@ SOCKET SetupListener() {
         WSACleanup();
         return -1;
     }
+    MakeSocketNonInheritable(GSocket);
     iRes = bind(GSocket, result->ai_addr, (int)result->ai_addrlen);
     if (iRes == SOCKET_ERROR) {
         error("(Proxy) bind failed with error: " + std::to_string(WSAGetLastError()));
@@ -173,12 +187,17 @@ SOCKET SetupListener() {
 // Al pasar a TCP envia `Ft` con un envio TCP propio (2 bytes: ShouldSendOverTcp no lo
 // encaminaria por TCP) y TickAndAnnounce lo hace antes de que nadie vea Transport::Tcp.
 void SendTransportFt() {
+    // Desde aqui el TCP lleva el flujo en tiempo real: sin Nagle, para que un marco pequeno no
+    // espere el ACK del anterior. Si falla solo hay mas latencia; va ANTES de enviar Ft.
+    const int NoDelay = 1;
+    if (setsockopt(TCPSock, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&NoDelay), sizeof(NoDelay)) != 0)
+        debug("No se pudo activar TCP_NODELAY: " + std::to_string(WSAGetLastError()));
     TCPSend("Ft", TCPSock);
     info("Conexion: TCP (UDP bloqueado)");
 }
 
 void TransportTick() {
-    MR::ActiveTransport().TickAndAnnounce(std::chrono::steady_clock::now(), SendTransportFt);
+    MR::ActiveTransport().TickAndAnnounce(SendTransportFt);
 }
 
 void AutoPing() {

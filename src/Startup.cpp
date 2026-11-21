@@ -42,7 +42,7 @@ beammp_fs_string GetEN() {
 }
 
 std::string GetVer() {
-    return "1.0";
+    return "1.1";
 }
 std::string GetPatch() {
     return ".0";
