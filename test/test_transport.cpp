@@ -16,20 +16,8 @@
 
 namespace {
 
-using Clock = std::chrono::steady_clock;
 using std::chrono::milliseconds;
 using std::chrono::seconds;
-
-// Reloj inyectado: una hora fija; la clase nunca lee el reloj real.
-const Clock::time_point T0 = Clock::time_point {} + std::chrono::hours(1);
-
-Clock::time_point At(seconds S) {
-    return T0 + S;
-}
-
-Clock::time_point AtMs(int Ms) {
-    return T0 + milliseconds(Ms);
-}
 
 // Ft de mentira para las sesiones que no la necesitan.
 const std::function<void()> NoFt = [] {};
@@ -38,29 +26,51 @@ std::string WithFirst(char First, std::size_t Total) {
     return std::string(1, First) + std::string(Total - 1, 'a');
 }
 
+// N esperas de 1 s agotadas sin datagrama (lo que hace UDPRcv con SO_RCVTIMEO de 1 s).
+void WaitSeconds(MR::TransportMonitor& Monitor, int N) {
+    for (int I = 0; I < N; ++I) {
+        Monitor.OnUdpWait(seconds(1));
+    }
+}
+
+void WaitSeconds(MR::TransportSession& Session, std::uint64_t Generation, int N) {
+    for (int I = 0; I < N; ++I) {
+        Session.OnUdpWait(Generation, seconds(1));
+    }
+}
+
 } // namespace
+
+// El silencio UDP solo cuenta mientras el receptor espera en el socket (OnUdpWait); el
+// tiempo fuera de la recepcion (reenviar al juego, juego congelado) nunca se mide.
 
 TEST_CASE("MR::TransportMonitor: UDP sano durante 60 s nunca pasa a TCP") {
     MR::TransportMonitor Monitor(false);
-    Monitor.OnUdpStarted(T0);
+    Monitor.OnUdpStarted();
     for (int S = 1; S <= 60; ++S) {
-        if (S % 2 == 1) { // un paquete cada 2 s, el primero en t0+1s
-            Monitor.OnUdpPacket(At(seconds(S)));
+        if (S % 2 == 1) { // un datagrama y una espera agotada alternos
+            Monitor.OnUdpPacket();
+        } else {
+            Monitor.OnUdpWait(seconds(1));
         }
-        CHECK_FALSE(Monitor.Tick(At(seconds(S))));
+        CHECK_FALSE(Monitor.Tick());
         CHECK(Monitor.Current() == MR::Transport::Udp);
     }
 }
 
-TEST_CASE("MR::TransportMonitor: nunca llega UDP -> TCP a los 5 s, una sola vez") {
+TEST_CASE("MR::TransportMonitor: nunca llega UDP -> TCP con 5 s de espera, una sola vez") {
     MR::TransportMonitor Monitor(false);
-    Monitor.OnUdpStarted(T0);
-    CHECK_FALSE(Monitor.Tick(AtMs(4900)));
+    Monitor.OnUdpStarted();
+    WaitSeconds(Monitor, 4);
+    Monitor.OnUdpWait(milliseconds(900));
+    CHECK_FALSE(Monitor.Tick());
     CHECK(Monitor.Current() == MR::Transport::Udp);
-    CHECK(Monitor.Tick(At(seconds(5))));
+    Monitor.OnUdpWait(milliseconds(100));
+    CHECK(Monitor.Tick());
     CHECK(Monitor.Current() == MR::Transport::Tcp);
-    CHECK_FALSE(Monitor.Tick(At(seconds(6))));
-    CHECK_FALSE(Monitor.Tick(At(seconds(60))));
+    CHECK_FALSE(Monitor.Tick());
+    WaitSeconds(Monitor, 60);
+    CHECK_FALSE(Monitor.Tick());
     CHECK(Monitor.Current() == MR::Transport::Tcp);
 }
 
@@ -69,64 +79,166 @@ TEST_CASE("MR::TransportMonitor: las constantes son las del contrato") {
     CHECK(MR::SessionUdpSilence == seconds(10));
 }
 
-TEST_CASE("MR::TransportMonitor: el UDP muere en sesion -> TCP tras 10 s de silencio") {
+TEST_CASE("MR::TransportMonitor: el UDP muere en sesion -> TCP con 10 s de espera") {
     MR::TransportMonitor Monitor(false);
-    Monitor.OnUdpStarted(T0);
-    Monitor.OnUdpPacket(At(seconds(1)));
-    Monitor.OnUdpPacket(At(seconds(30)));
-    CHECK_FALSE(Monitor.Tick(At(seconds(30))));
-    CHECK_FALSE(Monitor.Tick(AtMs(39900)));
+    Monitor.OnUdpStarted();
+    Monitor.OnUdpPacket();
+    WaitSeconds(Monitor, 9);
+    Monitor.OnUdpWait(milliseconds(900));
+    CHECK_FALSE(Monitor.Tick());
     CHECK(Monitor.Current() == MR::Transport::Udp);
-    CHECK(Monitor.Tick(At(seconds(40))));
+    Monitor.OnUdpWait(milliseconds(100));
+    CHECK(Monitor.Tick());
     CHECK(Monitor.Current() == MR::Transport::Tcp);
-    CHECK_FALSE(Monitor.Tick(At(seconds(41))));
+    CHECK_FALSE(Monitor.Tick());
 }
 
 TEST_CASE("MR::TransportMonitor: tras el primer paquete ya no rige la gracia de 5 s") {
     MR::TransportMonitor Monitor(false);
-    Monitor.OnUdpStarted(T0);
-    Monitor.OnUdpPacket(At(seconds(4)));
-    CHECK_FALSE(Monitor.Tick(At(seconds(5))));
-    CHECK_FALSE(Monitor.Tick(At(seconds(9))));
-    CHECK_FALSE(Monitor.Tick(AtMs(13900)));
-    CHECK(Monitor.Tick(At(seconds(14))));
+    Monitor.OnUdpStarted();
+    WaitSeconds(Monitor, 4); // 4 s esperando antes del primer datagrama: aun no hay fallback
+    Monitor.OnUdpPacket();
+    WaitSeconds(Monitor, 5);
+    CHECK_FALSE(Monitor.Tick()); // 5 s de espera ya en sesion: con la gracia inicial habria cambiado
+    WaitSeconds(Monitor, 4);
+    CHECK_FALSE(Monitor.Tick());
+    WaitSeconds(Monitor, 1);
+    CHECK(Monitor.Tick()); // 10 s
+}
+
+TEST_CASE("MR::TransportMonitor: un juego congelado 20 s sin esperar en el socket no cuenta (antes del primer datagrama)") {
+    MR::TransportMonitor Monitor(false);
+    Monitor.OnUdpStarted();
+    // El hilo de recepcion esta bloqueado reenviando al juego: ningun OnUdpWait ni OnUdpPacket,
+    // pero el hilo del ping sigue llamando a Tick cada segundo.
+    for (int S = 0; S < 20; ++S) {
+        CHECK_FALSE(Monitor.Tick());
+    }
+    CHECK(Monitor.Current() == MR::Transport::Udp);
+}
+
+TEST_CASE("MR::TransportMonitor: un juego congelado 20 s sin esperar en el socket no cuenta (en sesion)") {
+    MR::TransportMonitor Monitor(false);
+    Monitor.OnUdpStarted();
+    Monitor.OnUdpPacket();
+    WaitSeconds(Monitor, 3);
+    for (int S = 0; S < 20; ++S) {
+        CHECK_FALSE(Monitor.Tick());
+    }
+    CHECK(Monitor.Current() == MR::Transport::Udp);
+    // El receptor vuelve al socket: solo cuenta lo que espera de verdad (3 s + 6 s = 9 s).
+    WaitSeconds(Monitor, 6);
+    CHECK_FALSE(Monitor.Tick());
+    WaitSeconds(Monitor, 1);
+    CHECK(Monitor.Tick());
+}
+
+TEST_CASE("MR::TransportMonitor: una parada no se suma a las esperas (4,9 s + parada + 0,1 s)") {
+    MR::TransportMonitor Monitor(false);
+    Monitor.OnUdpStarted();
+    WaitSeconds(Monitor, 4);
+    Monitor.OnUdpWait(milliseconds(900));
+    for (int S = 0; S < 30; ++S) {
+        CHECK_FALSE(Monitor.Tick());
+    }
+    Monitor.OnUdpWait(milliseconds(100));
+    CHECK(Monitor.Tick());
+}
+
+TEST_CASE("MR::TransportMonitor: diez esperas de un segundo sin datagramas -> TCP (en sesion)") {
+    MR::TransportMonitor Monitor(false);
+    Monitor.OnUdpStarted();
+    Monitor.OnUdpPacket();
+    for (int S = 1; S <= 9; ++S) {
+        Monitor.OnUdpWait(seconds(1));
+        CHECK_FALSE(Monitor.Tick());
+    }
+    Monitor.OnUdpWait(seconds(1));
+    CHECK(Monitor.Tick());
+    CHECK(Monitor.Current() == MR::Transport::Tcp);
+}
+
+TEST_CASE("MR::TransportMonitor: un datagrama reinicia la cuenta de esperas") {
+    MR::TransportMonitor Monitor(false);
+    Monitor.OnUdpStarted();
+    Monitor.OnUdpPacket();
+    WaitSeconds(Monitor, 9);
+    CHECK_FALSE(Monitor.Tick());
+    Monitor.OnUdpPacket(); // a punto de saltar: el datagrama pone la cuenta a cero
+    WaitSeconds(Monitor, 9);
+    CHECK_FALSE(Monitor.Tick());
+    WaitSeconds(Monitor, 1);
+    CHECK(Monitor.Tick());
+}
+
+TEST_CASE("MR::TransportMonitor: un datagrama antes de los 5 s inicia la regla de 10 s") {
+    MR::TransportMonitor Monitor(false);
+    Monitor.OnUdpStarted();
+    WaitSeconds(Monitor, 4);
+    Monitor.OnUdpPacket();
+    WaitSeconds(Monitor, 9);
+    CHECK_FALSE(Monitor.Tick());
+    WaitSeconds(Monitor, 1);
+    CHECK(Monitor.Tick());
+}
+
+TEST_CASE("MR::TransportMonitor: los errores que vuelven al instante no acumulan espera") {
+    MR::TransportMonitor Monitor(false);
+    Monitor.OnUdpStarted();
+    // Un socket roto: recvfrom falla al momento miles de veces (duracion ~0), ademas de
+    // duraciones negativas por si el reloj se comportara mal.
+    for (int I = 0; I < 5000; ++I) {
+        Monitor.OnUdpWait(milliseconds(0));
+        Monitor.OnUdpWait(milliseconds(-50));
+        CHECK_FALSE(Monitor.Tick());
+    }
+    CHECK(Monitor.Current() == MR::Transport::Udp);
+    // Las esperas cortas pero reales si suman: 5000 x 1 ms = 5 s antes del primer datagrama.
+    for (int I = 0; I < 4999; ++I) {
+        Monitor.OnUdpWait(milliseconds(1));
+    }
+    CHECK_FALSE(Monitor.Tick());
+    Monitor.OnUdpWait(milliseconds(1));
+    CHECK(Monitor.Tick());
 }
 
 TEST_CASE("MR::TransportMonitor: sin vuelta a UDP") {
     MR::TransportMonitor Monitor(false);
-    Monitor.OnUdpStarted(T0);
-    REQUIRE(Monitor.Tick(At(seconds(5))));
-    Monitor.OnUdpPacket(At(seconds(6)));
-    Monitor.OnUdpPacket(At(seconds(7)));
+    Monitor.OnUdpStarted();
+    WaitSeconds(Monitor, 5);
+    REQUIRE(Monitor.Tick());
+    Monitor.OnUdpPacket();
+    Monitor.OnUdpPacket();
     CHECK(Monitor.Current() == MR::Transport::Tcp);
-    CHECK_FALSE(Monitor.Tick(At(seconds(8))));
+    CHECK_FALSE(Monitor.Tick());
     CHECK(Monitor.Current() == MR::Transport::Tcp);
-    Monitor.OnUdpStarted(At(seconds(9))); // reiniciar el canal tampoco revierte
+    Monitor.OnUdpStarted(); // reiniciar el canal tampoco revierte
     CHECK(Monitor.Current() == MR::Transport::Tcp);
 }
 
 TEST_CASE("MR::TransportMonitor: forzado, el primer Tick tras OnUdpStarted da true") {
     MR::TransportMonitor Monitor(true);
-    Monitor.OnUdpStarted(T0);
-    CHECK(Monitor.Tick(At(seconds(1))));
+    Monitor.OnUdpStarted();
+    CHECK(Monitor.Tick());
     CHECK(Monitor.Current() == MR::Transport::Tcp);
-    CHECK_FALSE(Monitor.Tick(At(seconds(2))));
+    CHECK_FALSE(Monitor.Tick());
 }
 
 TEST_CASE("MR::TransportMonitor: forzado, un paquete UDP no evita el TCP") {
     MR::TransportMonitor Monitor(true);
-    Monitor.OnUdpStarted(T0);
-    Monitor.OnUdpPacket(T0);
-    CHECK(Monitor.Tick(T0));
+    Monitor.OnUdpStarted();
+    Monitor.OnUdpPacket();
+    CHECK(Monitor.Tick());
     CHECK(Monitor.Current() == MR::Transport::Tcp);
 }
 
 TEST_CASE("MR::TransportMonitor: Tick antes de OnUdpStarted es false") {
     MR::TransportMonitor Auto(false);
-    CHECK_FALSE(Auto.Tick(At(seconds(100))));
+    Auto.OnUdpWait(seconds(100));
+    CHECK_FALSE(Auto.Tick());
     CHECK(Auto.Current() == MR::Transport::Udp);
     MR::TransportMonitor Forced(true);
-    CHECK_FALSE(Forced.Tick(At(seconds(100))));
+    CHECK_FALSE(Forced.Tick());
     CHECK(Forced.Current() == MR::Transport::Udp);
 }
 
@@ -134,13 +246,14 @@ TEST_CASE("MR::TransportMonitor: dos hilos en el instante del cambio -> exactame
     constexpr int Rounds = 300;
     for (int Round = 0; Round < Rounds; ++Round) {
         MR::TransportMonitor Monitor(false);
-        Monitor.OnUdpStarted(T0);
+        Monitor.OnUdpStarted();
+        Monitor.OnUdpWait(seconds(5));
         std::atomic<bool> Go { false };
         std::atomic<int> Trues { 0 };
         auto Worker = [&] {
             while (!Go.load()) {
             }
-            if (Monitor.Tick(At(seconds(5)))) {
+            if (Monitor.Tick()) {
                 ++Trues;
             }
         };
@@ -154,19 +267,21 @@ TEST_CASE("MR::TransportMonitor: dos hilos en el instante del cambio -> exactame
     }
 }
 
-TEST_CASE("MR::TransportMonitor: OnUdpPacket concurrente con Tick no rompe el estado") {
+TEST_CASE("MR::TransportMonitor: OnUdpPacket y OnUdpWait concurrentes con Tick no rompen el estado") {
     MR::TransportMonitor Monitor(false);
-    Monitor.OnUdpStarted(T0);
+    Monitor.OnUdpStarted();
     std::atomic<bool> Done { false };
     std::thread Receiver([&] {
+        // Alterna una espera de 1 s y un datagrama: la espera nunca llega a 5 s.
         for (int S = 1; S <= 2000; ++S) {
-            Monitor.OnUdpPacket(AtMs(S));
+            Monitor.OnUdpWait(seconds(1));
+            Monitor.OnUdpPacket();
         }
         Done = true;
     });
     int Trues = 0;
     while (!Done.load()) {
-        if (Monitor.Tick(At(seconds(1)))) {
+        if (Monitor.Tick()) {
             ++Trues;
         }
     }
@@ -281,8 +396,9 @@ TEST_CASE("MR::TransportSession: sin sesion es UDP y no hace nada") {
     MR::TransportSession Session;
     int FtSent = 0;
     CHECK(Session.Current() == MR::Transport::Udp);
-    CHECK_FALSE(Session.OnUdpPacket(1, T0));
-    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(60)), [&] { ++FtSent; }));
+    CHECK_FALSE(Session.OnUdpPacket(1));
+    Session.OnUdpWait(1, seconds(60));
+    CHECK_FALSE(Session.TickAndAnnounce([&] { ++FtSent; }));
     CHECK(FtSent == 0);
     Session.End(1); // no-op
     CHECK(Session.Current() == MR::Transport::Udp);
@@ -291,38 +407,66 @@ TEST_CASE("MR::TransportSession: sin sesion es UDP y no hace nada") {
 TEST_CASE("MR::TransportSession: UDP sano anuncia el primer datagrama una sola vez") {
     MR::TransportSession Session;
     int FtSent = 0;
-    const auto Gen = Session.Begin(false, T0, NoFt).Generation;
+    const auto Gen = Session.Begin(false, NoFt).Generation;
     CHECK(Gen != 0);
-    CHECK_FALSE(Session.TickAndAnnounce(AtMs(900), [&] { ++FtSent; }));
-    CHECK(Session.OnUdpPacket(Gen, AtMs(1000)));
-    CHECK_FALSE(Session.OnUdpPacket(Gen, AtMs(2000)));
+    WaitSeconds(Session, Gen, 1);
+    CHECK_FALSE(Session.TickAndAnnounce([&] { ++FtSent; }));
+    CHECK(Session.OnUdpPacket(Gen));
+    CHECK_FALSE(Session.OnUdpPacket(Gen));
     for (int S = 2; S <= 30; ++S) {
-        Session.OnUdpPacket(Gen, At(seconds(S)));
-        CHECK_FALSE(Session.TickAndAnnounce(At(seconds(S)), [&] { ++FtSent; }));
+        WaitSeconds(Session, Gen, 1);
+        Session.OnUdpPacket(Gen);
+        CHECK_FALSE(Session.TickAndAnnounce([&] { ++FtSent; }));
     }
     CHECK(FtSent == 0);
     CHECK(Session.Current() == MR::Transport::Udp);
 }
 
-TEST_CASE("MR::TransportSession: sin UDP a los 5 s envia Ft una vez y pasa a TCP") {
+TEST_CASE("MR::TransportSession: sin UDP tras 5 s de espera envia Ft una vez y pasa a TCP") {
     MR::TransportSession Session;
     int FtSent = 0;
-    const auto Gen = Session.Begin(false, T0, NoFt).Generation;
-    CHECK_FALSE(Session.TickAndAnnounce(AtMs(4900), [&] { ++FtSent; }));
-    CHECK(Session.TickAndAnnounce(At(seconds(5)), [&] { ++FtSent; }));
+    const auto Gen = Session.Begin(false, NoFt).Generation;
+    WaitSeconds(Session, Gen, 4);
+    CHECK_FALSE(Session.TickAndAnnounce([&] { ++FtSent; }));
+    WaitSeconds(Session, Gen, 1);
+    CHECK(Session.TickAndAnnounce([&] { ++FtSent; }));
     CHECK(FtSent == 1);
     CHECK(Session.Current() == MR::Transport::Tcp);
-    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(6)), [&] { ++FtSent; }));
+    CHECK_FALSE(Session.TickAndAnnounce([&] { ++FtSent; }));
     CHECK(FtSent == 1);
     // Un datagrama tardio no anuncia "UDP" ni devuelve a UDP.
-    CHECK_FALSE(Session.OnUdpPacket(Gen, At(seconds(7))));
+    CHECK_FALSE(Session.OnUdpPacket(Gen));
     CHECK(Session.Current() == MR::Transport::Tcp);
+}
+
+TEST_CASE("MR::TransportSession: un juego congelado (sin esperas en el socket) no envia Ft") {
+    MR::TransportSession Session;
+    int FtSent = 0;
+    const auto Gen = Session.Begin(false, NoFt).Generation;
+    CHECK(Session.OnUdpPacket(Gen));
+    for (int S = 0; S < 60; ++S) {
+        CHECK_FALSE(Session.TickAndAnnounce([&] { ++FtSent; }));
+    }
+    CHECK(FtSent == 0);
+    CHECK(Session.Current() == MR::Transport::Udp);
+}
+
+TEST_CASE("MR::TransportSession: las esperas de una generacion vieja no cuentan") {
+    MR::TransportSession Session;
+    int FtSent = 0;
+    const auto Old = Session.Begin(false, NoFt).Generation;
+    const auto Fresh = Session.Begin(false, NoFt).Generation;
+    WaitSeconds(Session, Old, 60);
+    CHECK_FALSE(Session.TickAndAnnounce([&] { ++FtSent; }));
+    WaitSeconds(Session, Fresh, 5);
+    CHECK(Session.TickAndAnnounce([&] { ++FtSent; }));
+    CHECK(FtSent == 1);
 }
 
 TEST_CASE("MR::TransportSession: Begin sin forzar usa UDP y no envia Ft") {
     MR::TransportSession Session;
     int FtSent = 0;
-    const auto Start = Session.Begin(false, T0, [&] { ++FtSent; });
+    const auto Start = Session.Begin(false, [&] { ++FtSent; });
     CHECK(Start.Generation != 0);
     CHECK(Start.UdpUsed);
     CHECK(FtSent == 0);
@@ -332,17 +476,17 @@ TEST_CASE("MR::TransportSession: Begin sin forzar usa UDP y no envia Ft") {
 TEST_CASE("MR::TransportSession: Begin forzado envia Ft una vez, pasa a TCP y no usa UDP") {
     MR::TransportSession Session;
     int FtSent = 0;
-    const auto Start = Session.Begin(true, T0, [&] { ++FtSent; });
+    const auto Start = Session.Begin(true, [&] { ++FtSent; });
     CHECK(Start.Generation != 0);
     CHECK_FALSE(Start.UdpUsed);
     CHECK(FtSent == 1);
     // Nunca hay una ventana en UDP: no hace falta un Tick para que Current() sea TCP.
     CHECK(Session.Current() == MR::Transport::Tcp);
-    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(1)), [&] { ++FtSent; }));
-    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(60)), [&] { ++FtSent; }));
+    CHECK_FALSE(Session.TickAndAnnounce([&] { ++FtSent; }));
+    CHECK_FALSE(Session.TickAndAnnounce([&] { ++FtSent; }));
     CHECK(FtSent == 1);
     // Un datagrama UDP perdido no anuncia "UDP" ni devuelve a UDP.
-    CHECK_FALSE(Session.OnUdpPacket(Start.Generation, At(seconds(2))));
+    CHECK_FALSE(Session.OnUdpPacket(Start.Generation));
     CHECK(Session.Current() == MR::Transport::Tcp);
 }
 
@@ -351,7 +495,7 @@ TEST_CASE("MR::TransportSession: Begin forzado, nadie ve TCP antes de que Ft hay
     std::atomic<bool> FtOnWire { false };
     std::atomic<bool> SawTcpBeforeFt { false };
     std::thread Sender;
-    const auto Start = Session.Begin(true, T0, [&] {
+    const auto Start = Session.Begin(true, [&] {
         Sender = std::thread([&] {
             // Equivale a ServerSend decidiendo la ruta mientras se envia Ft.
             if (Session.Current() == MR::Transport::Tcp && !FtOnWire.load()) {
@@ -368,11 +512,12 @@ TEST_CASE("MR::TransportSession: Begin forzado, nadie ve TCP antes de que Ft hay
 
 TEST_CASE("MR::TransportSession: pasar a TCP por el Tick, nadie ve TCP antes de que Ft haya salido") {
     MR::TransportSession Session;
-    Session.Begin(false, T0, NoFt);
+    const auto Gen = Session.Begin(false, NoFt).Generation;
+    WaitSeconds(Session, Gen, 5);
     std::atomic<bool> FtOnWire { false };
     std::atomic<bool> SawTcpBeforeFt { false };
     std::thread Sender;
-    CHECK(Session.TickAndAnnounce(At(seconds(5)), [&] {
+    CHECK(Session.TickAndAnnounce([&] {
         Sender = std::thread([&] {
             if (Session.Current() == MR::Transport::Tcp && !FtOnWire.load()) {
                 SawTcpBeforeFt = true;
@@ -388,34 +533,35 @@ TEST_CASE("MR::TransportSession: pasar a TCP por el Tick, nadie ve TCP antes de 
 TEST_CASE("MR::TransportSession: una sesion nueva empieza limpia y la anterior no la cierra") {
     MR::TransportSession Session;
     int FtSent = 0;
-    const auto Old = Session.Begin(false, T0, NoFt).Generation;
-    CHECK(Session.TickAndAnnounce(At(seconds(5)), [&] { ++FtSent; }));
+    const auto Old = Session.Begin(false, NoFt).Generation;
+    WaitSeconds(Session, Old, 5);
+    CHECK(Session.TickAndAnnounce([&] { ++FtSent; }));
     CHECK(Session.Current() == MR::Transport::Tcp);
 
-    const auto Fresh = Session.Begin(false, At(seconds(100)), NoFt).Generation;
+    const auto Fresh = Session.Begin(false, NoFt).Generation;
     CHECK(Fresh != Old);
     CHECK(Session.Current() == MR::Transport::Udp); // no hereda el TCP
-    CHECK_FALSE(Session.OnUdpPacket(Old, At(seconds(101)))); // datagrama del bucle viejo: ignorado
-    CHECK(Session.OnUdpPacket(Fresh, At(seconds(101))));
+    CHECK_FALSE(Session.OnUdpPacket(Old)); // datagrama del bucle viejo: ignorado
+    CHECK(Session.OnUdpPacket(Fresh));
 
     Session.End(Old); // el cierre tardio del bucle viejo no toca la sesion nueva
-    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(102)), [&] { ++FtSent; }));
+    CHECK_FALSE(Session.TickAndAnnounce([&] { ++FtSent; }));
     CHECK(Session.Current() == MR::Transport::Udp);
     CHECK(FtSent == 1);
 
     Session.End(Fresh);
     CHECK(Session.Current() == MR::Transport::Udp);
-    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(500)), [&] { ++FtSent; }));
+    CHECK_FALSE(Session.TickAndAnnounce([&] { ++FtSent; }));
     CHECK(FtSent == 1);
 }
 
 TEST_CASE("MR::TransportSession: la sesion nueva forzada o no sale del cfg de cada vez") {
     MR::TransportSession Session;
     int FtSent = 0;
-    CHECK_FALSE(Session.Begin(true, T0, [&] { ++FtSent; }).UdpUsed);
+    CHECK_FALSE(Session.Begin(true, [&] { ++FtSent; }).UdpUsed);
     CHECK(FtSent == 1);
-    CHECK(Session.Begin(false, At(seconds(10)), NoFt).UdpUsed);
-    CHECK_FALSE(Session.TickAndAnnounce(At(seconds(11)), [&] { ++FtSent; }));
+    CHECK(Session.Begin(false, NoFt).UdpUsed);
+    CHECK_FALSE(Session.TickAndAnnounce([&] { ++FtSent; }));
     CHECK(Session.Current() == MR::Transport::Udp);
 }
 

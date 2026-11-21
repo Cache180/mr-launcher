@@ -656,3 +656,77 @@ TEST_CASE("PathToUtf8: una ruta fuera de la pagina ANSI se convierte a UTF-8 sin
     CHECK(Out.find("Muertazos_\xc3\xb1_\xe6\x97\xa5\xe6\x9c\xac") != std::string::npos);
     CHECK(MR::PathToUtf8(fs::path("MR-Launcher.cfg")) == "MR-Launcher.cfg");
 }
+
+namespace {
+
+// Deja el archivo con una antiguedad de una hora (un resto de una ejecucion caida).
+void MakeOld(const fs::path& File) {
+    fs::last_write_time(File, fs::file_time_type::clock::now() - std::chrono::hours(1));
+}
+
+}
+
+TEST_CASE("RemoveStaleConfigTemps: borra los MR-Launcher.cfg.<pid>.tmp viejos y nada mas") {
+    TempDir Dir;
+    const fs::path Stale1 = Dir.Path() / "MR-Launcher.cfg.1111.tmp";
+    const fs::path Stale2 = Dir.Path() / "MR-Launcher.cfg.4294967295.tmp";
+    WriteAll(Stale1, "{\"Install\":\"resto\"}");
+    WriteAll(Stale2, "{\"Install\":\"resto\"}");
+    MakeOld(Stale1);
+    MakeOld(Stale2);
+    // Nada de esto se toca: el cfg, su copia .corrupt, nombres que no son el patron exacto y un directorio.
+    const fs::path Keep[] = {
+        Dir.Cfg(),
+        Dir.Path() / "MR-Launcher.cfg.corrupt",
+        Dir.Path() / "MR-Launcher.cfg.tmp",
+        Dir.Path() / "MR-Launcher.cfg..tmp",
+        Dir.Path() / "MR-Launcher.cfg.12a.tmp",
+        Dir.Path() / "MR-Launcher.cfg.1111.tmp.bak",
+        Dir.Path() / "MR-Launcher.cfg.1111",
+        Dir.Path() / "Otro.cfg.1111.tmp",
+        Dir.Path() / "xMR-Launcher.cfg.1111.tmp",
+    };
+    for (const auto& File : Keep) {
+        WriteAll(File, "contenido ajeno");
+        MakeOld(File);
+    }
+    const fs::path DirTmp = Dir.Path() / "MR-Launcher.cfg.3333.tmp";
+    fs::create_directory(DirTmp);
+
+    CHECK(MR::RemoveStaleConfigTemps(Dir.Cfg()) == 2);
+
+    CHECK_FALSE(fs::exists(Stale1));
+    CHECK_FALSE(fs::exists(Stale2));
+    for (const auto& File : Keep) {
+        CAPTURE(File.filename().string());
+        CHECK(fs::exists(File));
+        CHECK(ReadAll(File) == "contenido ajeno");
+    }
+    CHECK(fs::is_directory(DirTmp));
+}
+
+TEST_CASE("RemoveStaleConfigTemps: un temporal reciente (otro launcher escribiendo ahora) se respeta") {
+    TempDir Dir;
+    const fs::path Fresh = Dir.Path() / "MR-Launcher.cfg.2222.tmp";
+    WriteAll(Fresh, "{\"Parcial\":");
+    CHECK(MR::RemoveStaleConfigTemps(Dir.Cfg()) == 0);
+    CHECK(ReadAll(Fresh) == "{\"Parcial\":");
+}
+
+TEST_CASE("RemoveStaleConfigTemps: sin carpeta o sin archivos no hace nada ni lanza") {
+    TempDir Dir;
+    CHECK(MR::RemoveStaleConfigTemps(Dir.Path() / "no-existe" / "MR-Launcher.cfg") == 0);
+    CHECK(MR::RemoveStaleConfigTemps(Dir.Cfg()) == 0);
+}
+
+TEST_CASE("LoadOrCreateIdentity: al arrancar borra el temporal viejo de una ejecucion caida") {
+    TempDir Dir;
+    const fs::path Stale = Dir.Path() / "MR-Launcher.cfg.9999.tmp";
+    WriteAll(Stale, "{\"Install\":\"resto\"}");
+    MakeOld(Stale);
+    const MR::LauncherIdentity Id = MR::LoadOrCreateIdentity(Dir.Cfg());
+    REQUIRE_FALSE(Id.Install.empty());
+    CHECK_FALSE(fs::exists(Stale));
+    CHECK(CountTmpFiles(Dir.Path()) == 0);
+    CHECK(MR::IsValidInstallKey(ReadJson(Dir.Cfg())["Install"].get<std::string>()));
+}
