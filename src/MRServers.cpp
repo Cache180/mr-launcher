@@ -91,7 +91,26 @@ std::string TruncateServerField(const std::string& Text, std::size_t Max) {
 }
 
 std::string SanitizeServerInfo(const std::string& Reply) {
-    return Reply;
+    Json Info = Json::parse(Reply, nullptr, false);
+    if (!Info.is_object()) {
+        return {};
+    }
+    const struct {
+        const char* Key;
+        std::size_t Max;
+    } Caps[] = {
+        { "name", MaxServerFieldChars }, { "map", MaxServerFieldChars },
+        { "desc", MaxServerFieldChars }, { "version", MaxServerFieldChars },
+        { "playerslist", MaxServerListChars }, { "modlist", MaxServerListChars },
+        { "tags", MaxServerListChars }, { "clientversion", MaxServerListChars }
+    };
+    for (const auto& Cap : Caps) {
+        const auto It = Info.find(Cap.Key);
+        if (It != Info.end() && It->is_string()) {
+            *It = TruncateServerField(It->get_ref<const std::string&>(), Cap.Max);
+        }
+    }
+    return Info.dump(-1, ' ', false, Json::error_handler_t::replace);
 }
 
 bool IsValidServerCfg(const Json& Cfg) {
@@ -131,13 +150,13 @@ Json BuildServerEntry(const Json& Cfg, const std::string& InfoJson) {
     Entry["map"] = TruncateServerField(TextField(Info, "map", ""));
     Entry["players"] = TextField(Info, "players", "0");
     Entry["maxplayers"] = TextField(Info, "maxplayers", "0");
-    Entry["playerslist"] = TextField(Info, "playerslist", "");
-    Entry["modlist"] = TextField(Info, "modlist", "");
+    Entry["playerslist"] = TruncateServerField(TextField(Info, "playerslist", ""), MaxServerListChars);
+    Entry["modlist"] = TruncateServerField(TextField(Info, "modlist", ""), MaxServerListChars);
     Entry["modstotal"] = TextField(Info, "modstotal", "0");
     Entry["modstotalsize"] = TextField(Info, "modstotalsize", "0");
     Entry["version"] = TruncateServerField(TextField(Info, "version", ""));
-    Entry["cversion"] = TextField(Info, "clientversion", "");
-    Entry["tags"] = TextField(Info, "tags", "");
+    Entry["cversion"] = TruncateServerField(TextField(Info, "clientversion", ""), MaxServerListChars);
+    Entry["tags"] = TruncateServerField(TextField(Info, "tags", ""), MaxServerListChars);
     Entry["location"] = "";
     Entry["owner"] = "";
     Entry["official"] = false;

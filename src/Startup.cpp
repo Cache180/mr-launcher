@@ -34,14 +34,6 @@ int ProxyPort = 0;
 
 namespace fs = std::filesystem;
 
-beammp_fs_string GetEN() {
-#if defined(_WIN32)
-    return L"MR-Launcher.exe";
-#elif defined(__linux__)
-    return "MR-Launcher";
-#endif
-}
-
 std::string GetVer() {
     return "1.1";
 }
@@ -56,75 +48,6 @@ fs::path GetBP() {
         fatal("No se pudo determinar la carpeta del launcher (ruta demasiado larga?)");
     }
     return Dir;
-}
-
-#if defined(_WIN32)
-void ReLaunch() {
-    std::wstring Arg;
-    for (int c = 2; c <= options.argc; c++) {
-        Arg += Utils::ToWString(options.argv[c - 1]);
-        Arg += L" ";
-    }
-    info("Relaunch!");
-    system("cls");
-    ShellExecuteW(nullptr, L"runas", (GetBP() / GetEN()).c_str(), Arg.c_str(), nullptr, SW_SHOWNORMAL);
-    ShowWindow(GetConsoleWindow(), 0);
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    exit(1);
-}
-void URelaunch() {
-    std::wstring Arg;
-    for (int c = 2; c <= options.argc; c++) {
-        Arg += Utils::ToWString(options.argv[c - 1]);
-        Arg += L" ";
-    }
-    ShellExecuteW(nullptr, L"open", (GetBP() / GetEN()).c_str(), Arg.c_str(), nullptr, SW_SHOWNORMAL);
-    ShowWindow(GetConsoleWindow(), 0);
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    exit(1);
-}
-#elif defined(__linux__)
-void ReLaunch() {
-    std::string Arg;
-    for (int c = 2; c <= options.argc; c++) {
-        Arg += options.argv[c - 1];
-        Arg += " ";
-    }
-    info("Relaunch!");
-    system("clear");
-    int ret = execv((GetBP() / GetEN()).c_str(), const_cast<char**>(options.argv));
-    if (ret < 0) {
-        error(std::string("execv() failed with: ") + strerror(errno) + ". Failed to relaunch");
-        exit(1);
-    }
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    exit(1);
-}
-void URelaunch() {
-    int ret = execv((GetBP() / GetEN()).c_str(), const_cast<char**>(options.argv));
-    if (ret < 0) {
-        error(std::string("execv() failed with: ") + strerror(errno) + ". Failed to relaunch");
-        exit(1);
-    }
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    exit(1);
-}
-#endif
-
-void CheckName() {
-#if defined(_WIN32)
-    std::wstring DN = GetEN(), CDir = Utils::ToWString(options.executable_name), FN = CDir.substr(CDir.find_last_of('\\') + 1);
-#elif defined(__linux__)
-    std::string DN = GetEN(), CDir = options.executable_name, FN = CDir.substr(CDir.find_last_of('/') + 1);
-#endif
-    if (FN != DN) {
-        if (fs::exists(DN))
-            fs::remove(DN.c_str());
-        if (fs::exists(DN))
-            ReLaunch();
-        fs::rename(FN.c_str(), DN.c_str());
-        URelaunch();
-    }
 }
 
 #ifdef _WIN32
@@ -163,14 +86,12 @@ void InitLauncher() {
     SetConsoleOutputCP(CP_UTF8);
     _setmode(_fileno(stdout), _O_U8TEXT);
     debug("Launcher Version : " + GetVer() + GetPatch());
-    CheckName();
     LinuxPatch();
 }
 #elif defined(__linux__)
 
 void InitLauncher() {
     info("MR Launcher v" + GetVer() + GetPatch());
-    CheckName();
 }
 #endif
 

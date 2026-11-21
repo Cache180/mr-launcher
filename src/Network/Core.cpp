@@ -109,7 +109,9 @@ void GetServerInfo(std::string Data) {
         int Port = 0; // un puerto ilegible queda en 0 y la consulta lo rechaza
         const std::string PortText = Data.substr(Colon + 1);
         std::from_chars(PortText.data(), PortText.data() + PortText.size(), Port);
-        Info = QueryServerInfo(Data.substr(1, Colon - 1), Port);
+        // Lo que llega del server se recorta (y lo que no es un objeto JSON se descarta) antes
+        // de reenviarlo al juego.
+        Info = MR::SanitizeServerInfo(QueryServerInfo(Data.substr(1, Colon - 1), Port));
     }
     if (!Info.empty()) {
         debug("Server Info: " + Info);

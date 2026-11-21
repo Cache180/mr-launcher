@@ -16,5 +16,4 @@ std::filesystem::path GetBP();
 std::filesystem::path GetGamePath();
 std::string GetVer();
 std::string GetPatch();
-beammp_fs_string GetEN();
 void ConfigInit();

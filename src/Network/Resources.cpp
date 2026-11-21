@@ -122,8 +122,21 @@ void UpdateUl(bool D, const std::string& msg) {
 
 float DownloadSpeed = 0;
 
+// Textos que el juego muestra (con el prefijo "UlDisconnected: " que pone UUl) cuando una
+// descarga termina sin que el server la haya cortado.
+static constexpr const char* ModMismatchText = "el mod descargado no coincide con lo anunciado por el servidor";
+static constexpr const char* ModSaveFailedText = "no se pudo guardar el mod (disco lleno o archivo bloqueado)";
+static constexpr const char* DataSocketFailedText = "no se pudo abrir la descarga";
+
+// Termina la sincronizacion con un error visible en el juego.
+static void FailSync(const char* Reason) {
+    Terminate = true;
+    UUl(Reason);
+}
+
 void AsyncUpdate(uint64_t& Rcv, uint64_t Size, const std::string& Name) {
-    do {
+    // Con la sincronizacion ya terminada no se escribe nada: un "0.0%" tardio taparia el error.
+    while (!Terminate) {
         double pr = double(Rcv) / double(Size) * 100;
         std::string Per = std::to_string(trunc(pr * 10) / 10);
         std::string SpeedString = "";
@@ -134,7 +147,10 @@ void AsyncUpdate(uint64_t& Rcv, uint64_t Size, const std::string& Name) {
         }
         UpdateUl(true, Name + " (" + Per.substr(0, Per.find('.') + 2) + "%)" + SpeedString);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    } while (!Terminate && Rcv < Size);
+        if (Rcv >= Size) {
+            break;
+        }
+    }
 }
 
 // MICROSOFT, I DONT CARE, WRITE BETTER CODE
@@ -260,7 +276,7 @@ std::vector<char> SingleNormalDownload(SOCKET MSock, uint64_t Size, const std::s
     GRcv = MData.size();
     if (GRcv != Size) {
         error("Something went wrong during download; didn't get enough data. Expected " + std::to_string(Size) + " bytes, got " + std::to_string(GRcv) + " bytes instead");
-        Terminate = true;
+        FailSync(ModMismatchText);
         Au.join();
         return {};
     }
@@ -304,7 +320,7 @@ std::vector<char> MultiDownload(SOCKET MSock, SOCKET DSock, uint64_t Size, const
     GRcv = MData.size() + DData.size();
     if (GRcv != Size) {
         error("Something went wrong during download; didn't get enough data. Expected " + std::to_string(Size) + " bytes, got " + std::to_string(GRcv) + " bytes instead");
-        Terminate = true;
+        FailSync(ModMismatchText);
         Au.join();
         return {};
     }
@@ -444,7 +460,7 @@ void NewSyncResources(SOCKET Sock, const std::string& Mods, const std::vector<Mo
     std::vector<std::pair<std::string, std::filesystem::path>> CachedMods = {};
     if (deleteDuplicateMods) {
         for (const auto& entry : fs::directory_iterator(CachingDirectory)) {
-            const std::string filename = entry.path().filename().string();
+            const std::string filename = MR::PathToUtf8(entry.path().filename());
             if (entry.is_regular_file() && entry.path().extension() == ".zip" && filename.length() > 10) {
                 CachedMods.push_back(std::make_pair(filename.substr(0, filename.length() - 13) + ".zip", entry.path()));
             }
@@ -458,9 +474,9 @@ void NewSyncResources(SOCKET Sock, const std::string& Mods, const std::vector<Mo
         if (deleteDuplicateMods) {
             for (auto& CachedMod : CachedMods) {
                 const bool cachedModExists = CachedMod.first == ModInfoIter->FileName;
-                const bool cachedModIsNotNewestVersion = CachedMod.second.stem().string() + ".zip" != std::filesystem::path(ModInfoIter->FileName).stem().string() + "-" + ModInfoIter->Hash.substr(0, 8) + ".zip";
+                const bool cachedModIsNotNewestVersion = MR::PathToUtf8(CachedMod.second.stem()) + ".zip" != std::filesystem::path(ModInfoIter->FileName).stem().string() + "-" + ModInfoIter->Hash.substr(0, 8) + ".zip";
                 if (cachedModExists && cachedModIsNotNewestVersion) {
-                    debug("Found duplicate mod '" + CachedMod.second.stem().string() + ".zip" + "' in cache, removing it");
+                    debug("Found duplicate mod '" + MR::PathToUtf8(CachedMod.second.stem()) + ".zip" + "' in cache, removing it");
                     std::filesystem::remove(CachedMod.second);
                     break;
                 }
@@ -498,7 +514,7 @@ void NewSyncResources(SOCKET Sock, const std::string& Mods, const std::vector<Mo
                 UpdateModUsage(FileName);
             } catch (std::exception& e) {
                 error("Failed copy to the mods folder! " + std::string(e.what()));
-                Terminate = true;
+                FailSync(ModSaveFailedText);
                 continue;
             }
             WaitForConfirm();
@@ -534,7 +550,7 @@ void NewSyncResources(SOCKET Sock, const std::string& Mods, const std::vector<Mo
                 UpdateModUsage(FileName);
             } catch (std::exception& e) {
                 error("Failed copy to the mods folder! " + std::string(e.what()));
-                Terminate = true;
+                FailSync(ModSaveFailedText);
                 continue;
             }
             WaitForConfirm();
@@ -550,6 +566,10 @@ void NewSyncResources(SOCKET Sock, const std::string& Mods, const std::vector<Mo
             return;
         }
 
+        // El tamano lo declara el server: se rechaza antes de pedirle el archivo.
+        if (!RejectOversizedMod(ModInfoIter->FileSize)) {
+            return;
+        }
         CheckForDir();
         std::string FName = ModInfoIter->FileName;
         do {
@@ -589,16 +609,16 @@ void NewSyncResources(SOCKET Sock, const std::string& Mods, const std::vector<Mo
                 OutFile.flush();
             }
             // 2. verify size and hash
-            if (std::filesystem::file_size(PathToSaveTo) != DownloadedFile.size()) {
+            std::error_code SizeEc;
+            const auto Written = std::filesystem::file_size(PathToSaveTo, SizeEc);
+            if (SizeEc || Written != DownloadedFile.size()) {
                 error(beammp_wide("Failed to write the entire file '") + beammp_fs_string(PathToSaveTo) + beammp_wide("' correctly (file size mismatch)"));
-                Terminate = true;
-            }
-
-            if (Utils::GetSha256HashReallyFastFile(PathToSaveTo) != ModInfoIter->Hash) {
+                FailSync(ModSaveFailedText);
+            } else if (Utils::GetSha256HashReallyFastFile(PathToSaveTo) != ModInfoIter->Hash) {
                 error(beammp_wide("Failed to write or download the entire file '") + beammp_fs_string(PathToSaveTo) + beammp_wide("' correctly (hash mismatch)"));
-                Terminate = true;
+                FailSync(ModMismatchText);
             }
-        } while (fs::file_size(PathToSaveTo) != ModInfoIter->FileSize && !Terminate);
+        } while (!Terminate && fs::file_size(PathToSaveTo) != ModInfoIter->FileSize);
         if (!Terminate) {
             if (!fs::exists(GetGamePath() / beammp_wide("mods/multiplayer"))) {
                 fs::create_directories(GetGamePath() / beammp_wide("mods/multiplayer"));
@@ -618,6 +638,7 @@ void NewSyncResources(SOCKET Sock, const std::string& Mods, const std::vector<Mo
             fs::copy_file(PathToSaveTo, tmp_name, fs::copy_options::overwrite_existing, ec);
             if (ec) {
                 error(beammp_wide("Error in copy_file during download of ") + beammp_fs_string(PathToSaveTo) + beammp_wide(": ") + Utils::ToWString(ec.message()));
+                FailSync(ModSaveFailedText);
                 break;
             }
             fs::rename(tmp_name, name);
@@ -700,6 +721,9 @@ void SyncResources(SOCKET Sock, const MR::LauncherIdentity& Identity) {
     if (!FNames.empty())
         info("Syncing...");
     SOCKET DSock = InitDSock();
+    if (DSock == 0) {
+        FailSync(DataSocketFailedText);
+    }
     for (auto FN = FNames.begin(), FS = FSizes.begin(); FN != FNames.end() && !Terminate; ++FN, ++FS) {
         auto pos = FN->find_last_of('/');
         if (pos != std::string::npos) {
@@ -742,7 +766,7 @@ void SyncResources(SOCKET Sock, const MR::LauncherIdentity& Identity) {
                     UpdateModUsage(modname);
                 } catch (std::exception& e) {
                     error("Failed copy to the mods folder! " + std::string(e.what()));
-                    Terminate = true;
+                    FailSync(ModSaveFailedText);
                     continue;
                 }
                 WaitForConfirm();
@@ -753,7 +777,7 @@ void SyncResources(SOCKET Sock, const MR::LauncherIdentity& Identity) {
         CheckForDir();
         std::string FName = PathToSaveTo.filename().string();
         do {
-            debug("Loading file '" + FName + "' to '" + PathToSaveTo.string() + "'");
+            debug("Loading file '" + FName + "' to '" + MR::PathToUtf8(PathToSaveTo) + "'");
             TCPSend("f" + *FN, Sock);
 
             std::string Data = TCPRcv(Sock);
@@ -781,11 +805,13 @@ void SyncResources(SOCKET Sock, const MR::LauncherIdentity& Identity) {
                 OutFile.write(DownloadedFile.data(), DownloadedFile.size());
             }
             // 2. verify size
-            if (std::filesystem::file_size(PathToSaveTo) != DownloadedFile.size()) {
+            std::error_code SizeEc;
+            const auto Written = std::filesystem::file_size(PathToSaveTo, SizeEc);
+            if (SizeEc || Written != DownloadedFile.size()) {
                 error(beammp_wide("Failed to write the entire file '") + beammp_fs_string(PathToSaveTo) + beammp_wide("' correctly (file size mismatch)"));
-                Terminate = true;
+                FailSync(ModSaveFailedText);
             }
-        } while (fs::file_size(PathToSaveTo) != std::stoull(*FS) && !Terminate);
+        } while (!Terminate && fs::file_size(PathToSaveTo) != FileSize);
         if (!Terminate) {
             if (!fs::exists(GetGamePath() / beammp_wide("mods/multiplayer"))) {
                 fs::create_directories(GetGamePath() / beammp_wide("mods/multiplayer"));
@@ -802,7 +828,13 @@ void SyncResources(SOCKET Sock, const MR::LauncherIdentity& Identity) {
             auto tmp_name = name;
             tmp_name += L".tmp";
 
-            fs::copy_file(PathToSaveTo, tmp_name, fs::copy_options::overwrite_existing);
+            std::error_code CopyEc;
+            fs::copy_file(PathToSaveTo, tmp_name, fs::copy_options::overwrite_existing, CopyEc);
+            if (CopyEc) {
+                error(beammp_wide("Error in copy_file during download of ") + beammp_fs_string(PathToSaveTo) + beammp_wide(": ") + Utils::ToWString(CopyEc.message()));
+                FailSync(ModSaveFailedText);
+                break;
+            }
             fs::rename(tmp_name, name);
             UpdateModUsage(FN->substr(pos));
         }
