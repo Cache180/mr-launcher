@@ -57,6 +57,7 @@ if (MR_BUILD_TESTS)
             test/test_channel.cpp
             test/test_handshake.cpp
             test/test_transport.cpp
+            test/test_wire.cpp
             src/MRIdentity.cpp
             src/MRServers.cpp
             src/MRMods.cpp

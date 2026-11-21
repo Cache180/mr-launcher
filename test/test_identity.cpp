@@ -586,3 +586,65 @@ TEST_CASE("MR::ForceTcpFromConfig: solo la cadena \"tcp\" fuerza (json y ordered
     CHECK_FALSE(MR::ForceTcpFromConfig(json::array({ "tcp" })));
     CHECK_FALSE(MR::ForceTcpFromConfig(json(nullptr)));
 }
+
+namespace {
+
+// Archivos del directorio que terminan en .tmp (restos de una escritura).
+std::size_t CountTmpFiles(const fs::path& Dir) {
+    std::size_t Count = 0;
+    for (const auto& Entry : fs::directory_iterator(Dir)) {
+        if (Entry.path().extension() == ".tmp") {
+            ++Count;
+        }
+    }
+    return Count;
+}
+
+}
+
+TEST_CASE("TempConfigPath: un temporal por proceso, junto al cfg y con el pid") {
+    TempDir Dir;
+    const fs::path A = MR::detail::TempConfigPath(Dir.Cfg(), 1111);
+    const fs::path B = MR::detail::TempConfigPath(Dir.Cfg(), 2222);
+    CHECK(A != B);
+    CHECK(A.parent_path() == Dir.Path());
+    CHECK(A.filename().string() == "MR-Launcher.cfg.1111.tmp");
+    CHECK(B.filename().string() == "MR-Launcher.cfg.2222.tmp");
+}
+
+TEST_CASE("WriteConfigAtomicTo: dos escritores con temporales distintos no se pisan") {
+    TempDir Dir;
+    const fs::path TmpA = MR::detail::TempConfigPath(Dir.Cfg(), 1111);
+    const fs::path TmpB = MR::detail::TempConfigPath(Dir.Cfg(), 2222);
+    // El otro proceso esta a mitad de su escritura: su temporal existe con contenido parcial.
+    WriteAll(TmpB, "{\"Parcial\":");
+    nlohmann::ordered_json Doc = nlohmann::ordered_json::object();
+    Doc["Name"] = "PilotoA";
+    REQUIRE(MR::detail::WriteConfigAtomicTo(Dir.Cfg(), Doc, TmpA));
+    CHECK(ReadJson(Dir.Cfg())["Name"] == "PilotoA");
+    CHECK_FALSE(fs::exists(TmpA));
+    CHECK(ReadAll(TmpB) == "{\"Parcial\":"); // intacto
+}
+
+TEST_CASE("WriteConfigAtomicTo: un fallo no deja temporal") {
+    TempDir Dir;
+    // El destino es un directorio: el renombrado falla y el temporal debe borrarse.
+    fs::create_directory(Dir.Cfg());
+    const fs::path Tmp = MR::detail::TempConfigPath(Dir.Cfg(), 1111);
+    nlohmann::ordered_json Doc = nlohmann::ordered_json::object();
+    Doc["Name"] = "PilotoA";
+    CHECK_FALSE(MR::detail::WriteConfigAtomicTo(Dir.Cfg(), Doc, Tmp));
+    CHECK_FALSE(fs::exists(Tmp));
+}
+
+TEST_CASE("Escritura del cfg: no queda ningun *.tmp tras crear, reparar y guardar el nombre") {
+    TempDir Dir;
+    const MR::LauncherIdentity Id = MR::LoadOrCreateIdentity(Dir.Cfg());
+    REQUIRE_FALSE(Id.Install.empty());
+    CHECK(CountTmpFiles(Dir.Path()) == 0);
+    std::string Reason;
+    REQUIRE(MR::SetPilotName(Dir.Cfg(), "PilotoB", Reason));
+    CHECK(CountTmpFiles(Dir.Path()) == 0);
+    REQUIRE(MR::ClearPilotName(Dir.Cfg(), Reason));
+    CHECK(CountTmpFiles(Dir.Path()) == 0);
+}
