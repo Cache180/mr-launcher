@@ -255,11 +255,6 @@ TEST_CASE("MR::ShouldSendOverTcp: con Transport::Tcp todo va por TCP") {
     CHECK(MR::ShouldSendOverTcp(WithFirst('Z', 5000), false, MR::Transport::Tcp));
 }
 
-TEST_CASE("MR::TransportJson") {
-    CHECK(MR::TransportJson(MR::Transport::Udp) == R"({"transport":"udp"})");
-    CHECK(MR::TransportJson(MR::Transport::Tcp) == R"({"transport":"tcp"})");
-}
-
 TEST_CASE("MR::UseSendLarge: con UDP sano conserva la regla de hoy") {
     // Hoy: SendLarge si es ack (O/T) o mide mas de 1000; el resto de TCP va por TCPSend.
     CHECK(MR::UseSendLarge(WithFirst('O', 4), false, MR::Transport::Udp));

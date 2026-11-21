@@ -8,6 +8,7 @@
 #include "MRHandshake.h"
 #include "MRIdentity.h"
 #include "MRServers.h"
+#include "MRTransport.h"
 #include "Network/network.hpp"
 #include "Security/Init.h"
 #include "Utils.h"
@@ -266,6 +267,12 @@ void Parse(std::string Data, SOCKET CSocket) {
         if (res < 0) {
             debug("(Core) send failed with error: " + std::to_string(WSAGetLastError()));
         }
+    }
+    // El juego pregunta el ping ("Up") cada segundo: junto a la respuesta le decimos el transporte
+    // (Utudp / Uttcp). Sin estado a proposito: la interfaz puede recargarse y lo recibe de nuevo.
+    // Current() suelta su candado antes de CoreSend, que toma solo sendMutex.
+    if (Code == 'U' && (SubCode == 'p' || !SubCode)) {
+        CoreSend(MR::TransportCorePacket(MR::ActiveTransport().Current()));
     }
 }
 void GameHandler(SOCKET Client) {

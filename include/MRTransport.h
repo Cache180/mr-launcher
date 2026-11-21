@@ -61,8 +61,8 @@ private:
 // siempre es true.
 bool ShouldSendOverTcp(std::string_view Data, bool Rel, Transport Current);
 
-// {"transport":"udp"} / {"transport":"tcp"}
-std::string TransportJson(Transport Current);
+// Paquete del canal del core launcher -> juego que anuncia el transporte: "Utudp" / "Uttcp".
+std::string TransportCorePacket(Transport Current);
 
 // Una vez elegido TCP (ShouldSendOverTcp), decide entre SendLarge (true) y TCPSend (false).
 // Regla de hoy: SendLarge si es ack (O/T con mas de 3 bytes) o mide mas de 1000 bytes.

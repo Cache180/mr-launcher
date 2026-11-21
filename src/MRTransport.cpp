@@ -75,8 +75,8 @@ bool ShouldSendOverTcp(std::string_view Data, bool Rel, Transport Current) {
     return Ack || Rel;
 }
 
-std::string TransportJson(Transport Current) {
-    return Current == Transport::Tcp ? R"({"transport":"tcp"})" : R"({"transport":"udp"})";
+std::string TransportCorePacket(Transport Current) {
+    return Current == Transport::Tcp ? "Uttcp" : "Utudp";
 }
 
 bool UseSendLarge(std::string_view Data, bool Rel, Transport Current) {
@@ -129,7 +129,7 @@ bool TransportSession::TickAndAnnounce(TimePoint Now, const std::function<void()
     }
     // A proposito, SendFt (un send() TCP que puede bloquearse) corre con mGate cogido: es lo que
     // garantiza que ningun paquete se encamine por TCP antes que Ft. Mientras dure, se detienen
-    // Current() (ServerSend y la ruta /mr/transport) y OnUdpPacket (recepcion UDP). Ft pesa
+    // Current() (ServerSend y el ping al juego) y OnUdpPacket (recepcion UDP). Ft pesa
     // 2 bytes, asi que en la practica es instantaneo; si el socket TCP se atasca, los envios se
     // atascarian igualmente en el propio send().
     SendFt();

@@ -9,6 +9,6 @@
 class HTTP {
 public:
     // Servidor HTTP local que el mod usa para descubrir su puerto (mensaje `P`).
-    // No sale a internet: responde 404 a todo salvo GET /mr/transport (transporte actual).
+    // No sale a internet: responde 404 a todo.
     static void StartProxy();
 };
