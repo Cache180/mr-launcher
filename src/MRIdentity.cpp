@@ -402,8 +402,7 @@ namespace detail {
                 if (!Out) {
                     return false;
                 }
-                Out << Doc.dump(4, ' ', false, Json::error_handler_t::replace) << '
-';
+                Out << Doc.dump(4, ' ', false, Json::error_handler_t::replace) << '\n';
                 Out.flush();
                 if (!Out) {
                     Out.close();
