@@ -428,3 +428,8 @@ TEST_CASE("MR::ActiveTransport: es una unica instancia compartida") {
     CHECK(&MR::ActiveTransport() == &MR::ActiveTransport());
     CHECK(MR::ActiveTransport().Current() == MR::Transport::Udp);
 }
+
+TEST_CASE("MR::TransportCorePacket") {
+    CHECK(MR::TransportCorePacket(MR::Transport::Udp) == "Utudp");
+    CHECK(MR::TransportCorePacket(MR::Transport::Tcp) == "Uttcp");
+}
