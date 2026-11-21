@@ -9,6 +9,7 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <vector>
 #if defined(_WIN32)
 #elif defined(__linux__)
 #include <unistd.h>
@@ -58,9 +59,14 @@ beammp_fs_string GetEP(const beammp_fs_char* P) {
 fs::path GetBP(const beammp_fs_char* P) {
     fs::path fspath = {};
 #if defined(_WIN32)
-    beammp_fs_char path[256];
-    GetModuleFileNameW(nullptr, path, sizeof(path));
-    fspath = path;
+    // El tamano se pasa en caracteres (no en bytes). 0 es fallo y un resultado igual al
+    // tamano es ruta truncada: sin la carpeta del launcher no se puede seguir.
+    std::vector<beammp_fs_char> path(32768);
+    const DWORD len = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+    if (len == 0 || len >= path.size()) {
+        fatal("No se pudo determinar la carpeta del launcher (ruta demasiado larga?)");
+    }
+    fspath = path.data();
 #elif defined(__linux__)
     fspath = fs::canonical("/proc/self/exe");
 #elif defined(__APPLE__)

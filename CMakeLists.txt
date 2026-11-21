@@ -63,7 +63,8 @@ if (MR_BUILD_TESTS)
             src/MRMods.cpp
             src/MRChannel.cpp
             src/MRHandshake.cpp
-            src/MRTransport.cpp)
+            src/MRTransport.cpp
+            src/MRWire.cpp)
     target_include_directories(MR-Launcher-tests PRIVATE "include")
     target_link_libraries(MR-Launcher-tests PRIVATE
             doctest::doctest nlohmann_json::nlohmann_json OpenSSL::Crypto ZLIB::ZLIB)

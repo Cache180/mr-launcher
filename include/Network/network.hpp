@@ -6,6 +6,7 @@
 
 
 #pragma once
+#include "MRIdentity.h"
 #include <filesystem>
 #include <nlohmann/json_fwd.hpp>
 #include <string>
@@ -22,6 +23,8 @@ void NetReset();
 extern bool Dev;
 extern int ping;
 
+// Enlaza el puerto local del launcher (error fatal si esta ocupado). Idempotente.
+bool CoreListen();
 [[noreturn]] void CoreNetwork();
 extern int ProxyPort;
 extern int ClientID;
@@ -48,7 +51,7 @@ bool CheckBytes(int32_t Bytes, int32_t Expected = -1);
 void GameSend(std::string_view Data);
 void SendLarge(std::string Data);
 std::string TCPRcv(uint64_t Sock);
-void SyncResources(uint64_t TCPSock);
+void SyncResources(uint64_t TCPSock, const MR::LauncherIdentity& Identity);
 std::string GetAddr(const std::string& IP);
 void ServerParser(std::string_view Data);
 // Fallback a TCP (MRTransport): tick del monitor y bandera del cfg `Transport: "tcp"`.
@@ -56,9 +59,9 @@ void TransportTick();
 void SendTransportFt();
 extern bool ForceTcpTransport;
 void TCPSend(const std::string& Data, uint64_t Sock);
-void TCPClientMain(const std::string& IP, int Port);
+void TCPClientMain(const std::string& IP, int Port, MR::LauncherIdentity Identity);
 void UDPClientMain(const std::string& IP, int Port);
-void TCPGameServer(const std::string& IP, int Port);
+void TCPGameServer(const std::string& IP, int Port, MR::LauncherIdentity Identity);
 bool SecurityWarning();
 void CoreSend(std::string data);
 int RecvWaitAll(int sockfd, char *buf, int len);

@@ -66,10 +66,9 @@ void Abord() {
     info("Terminated!");
 }
 
-std::string Auth(SOCKET Sock) {
+std::string Auth(SOCKET Sock, const MR::LauncherIdentity& Identity) {
     // Saludo MR: MR<version> -> A -> identidad -> P<id>. Los paquetes (en especial
     // la identidad, que lleva la clave de instalacion) no se registran en ningun log.
-    const MR::LauncherIdentity Identity { Username, InstallKey };
     const MR::HandshakeTransport Transport {
         [Sock](const std::string& Data) {
             TCPSend(Data, Sock);
@@ -80,10 +79,10 @@ std::string Auth(SOCKET Sock) {
     const MR::HandshakeResult Handshake = MR::PerformHandshake(Identity, GetVer(), Transport);
     if (!Handshake.Ok) {
         Abord();
-        CoreSend("L");
         if (!Handshake.Failure.empty()) {
             UUl(Handshake.Failure);
         }
+        CoreSend("L");
         return "";
     }
     ClientID = Handshake.ClientId;
@@ -604,8 +603,8 @@ void NewSyncResources(SOCKET Sock, const std::string& Mods, const std::vector<Mo
     }
 }
 
-void SyncResources(SOCKET Sock) {
-    std::string Ret = Auth(Sock);
+void SyncResources(SOCKET Sock, const MR::LauncherIdentity& Identity) {
+    std::string Ret = Auth(Sock, Identity);
 
     debug("Mod info: " + Ret);
 

@@ -67,9 +67,12 @@ bool SecurityWarning() {
 }
 
 void StartSync(const std::string& Data) {
+    // Copia de nombre y clave tomada aqui, antes de lanzar ningun hilo: un cambio de nombre
+    // posterior (mensaje N) no puede alterar una conexion ya en marcha.
+    const MR::LauncherIdentity Identity { Username, InstallKey };
     // Sin nombre de piloto valido no se abre la conexion: el juego recibe el aviso por
     // el canal de estado y vuelve a la lista de servidores.
-    if (!MR::IsValidPilotName(Username)) {
+    if (!MR::IsValidPilotName(Identity.Name)) {
         UUl(MR::NoPilotNameMessage);
         Terminate = true;
         CoreSend("L");
@@ -90,7 +93,7 @@ void StartSync(const std::string& Data) {
     Terminate = false;
     ConfList->clear();
     ping = -1;
-    std::thread GS(TCPGameServer, IP, std::stoi(Data.substr(Data.find(':') + 1)));
+    std::thread GS(TCPGameServer, IP, std::stoi(Data.substr(Data.find(':') + 1)), Identity);
     GS.detach();
     info("Connecting to server");
 }
@@ -246,9 +249,11 @@ void Parse(std::string Data, SOCKET CSocket) {
         Data.clear();
         break;
     case 'I': {
-        auto future = std::async(std::launch::async, [data = std::move(Data)]() {
+        // En `futures` (como B): un future local bloquearia aqui, en su destructor, el
+        // canal del juego hasta que terminase la consulta.
+        futures.push_back(std::async(std::launch::async, [data = std::move(Data)]() {
             GetServerInfo(data);
-        });
+        }));
         break;
     }
     default:
@@ -291,9 +296,16 @@ void localRes() {
     }
     ConfList = new std::set<std::string>;
 }
-void CoreMain() {
-    debug("Core Network on start! port: " + std::to_string(options.port));
-    SOCKET LSocket, CSocket;
+// Socket de escucha del canal con el juego. Se enlaza ANTES de PreGame/InitGame (main): con el
+// puerto ocupado el launcher no toca mods/multiplayer ni lanza el juego. CoreMain lo reutiliza,
+// asi que nunca se enlaza dos veces ni queda a medias.
+static SOCKET CoreListener = -1;
+
+bool CoreListen() {
+    if (CoreListener != -1) {
+        return true;
+    }
+    SOCKET LSocket;
     struct addrinfo* res = nullptr;
     struct addrinfo hints { };
     int iRes;
@@ -314,14 +326,14 @@ void CoreMain() {
     if (iRes) {
         debug("(Core) addr info failed with error: " + std::to_string(iRes));
         WSACleanup();
-        return;
+        return false;
     }
     LSocket = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (LSocket == -1) {
         debug("(Core) socket failed with error: " + std::to_string(WSAGetLastError()));
         freeaddrinfo(res);
         WSACleanup();
-        return;
+        return false;
     }
     iRes = bind(LSocket, res->ai_addr, int(res->ai_addrlen));
     if (iRes == SOCKET_ERROR) {
@@ -330,16 +342,27 @@ void CoreMain() {
         KillSocket(LSocket);
         WSACleanup();
         fatal("No se pudo abrir el puerto local " + std::to_string(options.port) + ": ¿hay otro launcher abierto?");
-        return;
+        return false;
     }
+    freeaddrinfo(res);
     iRes = listen(LSocket, SOMAXCONN);
     if (iRes == SOCKET_ERROR) {
         debug("(Core) listen failed with error: " + std::to_string(WSAGetLastError()));
-        freeaddrinfo(res);
         KillSocket(LSocket);
         WSACleanup();
+        return false;
+    }
+    CoreListener = LSocket;
+    return true;
+}
+
+void CoreMain() {
+    debug("Core Network on start! port: " + std::to_string(options.port));
+    if (!CoreListen()) {
         return;
     }
+    const SOCKET LSocket = CoreListener;
+    SOCKET CSocket;
     do {
         CSocket = accept(LSocket, nullptr, nullptr);
         if (CSocket == -1) {
@@ -352,6 +375,7 @@ void CoreMain() {
         warn("Game Reconnecting...");
     } while (CSocket);
     KillSocket(LSocket);
+    CoreListener = -1;
     WSACleanup();
 }
 

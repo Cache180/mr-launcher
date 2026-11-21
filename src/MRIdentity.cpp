@@ -17,6 +17,15 @@
 #include <thread>
 #include <utility>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace MR {
@@ -145,40 +154,51 @@ namespace {
         return !Ec;
     }
 
-    // Escritura atomica: archivo temporal junto al destino + renombrado. El
-    // renombrado reemplaza el destino (en Windows, MoveFileEx con REPLACE_EXISTING
-    // dentro de la STL), asi que un corte deja el cfg viejo o el nuevo, nunca uno a medias.
-    bool WriteConfigAtomic(const fs::path& File, const Json& Doc) {
-        try {
-            const fs::path Parent = File.parent_path();
-            std::error_code Ec;
-            if (!Parent.empty()) {
-                fs::create_directories(Parent, Ec);
-            }
-            fs::path Tmp = File;
-            Tmp += ".tmp";
-            {
-                std::ofstream Out(Tmp, std::ios::binary | std::ios::trunc);
-                if (!Out) {
-                    return false;
-                }
-                Out << Doc.dump(4, ' ', false, Json::error_handler_t::replace) << '\n';
-                Out.flush();
-                if (!Out) {
-                    Out.close();
-                    fs::remove(Tmp, Ec);
-                    return false;
-                }
-            }
-            fs::rename(Tmp, File, Ec);
-            if (Ec) {
-                fs::remove(Tmp, Ec);
-                return false;
-            }
-            return true;
-        } catch (...) {
+    unsigned long CurrentPid() {
+#ifdef _WIN32
+        return static_cast<unsigned long>(GetCurrentProcessId());
+#else
+        return static_cast<unsigned long>(getpid());
+#endif
+    }
+
+    // Vuelca a disco el archivo ya escrito y cerrado (FlushFileBuffers / fsync).
+    bool SyncFileToDisk(const fs::path& File) {
+#ifdef _WIN32
+        HANDLE H = CreateFileW(File.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (H == INVALID_HANDLE_VALUE) {
             return false;
         }
+        const bool Ok = FlushFileBuffers(H) != 0;
+        CloseHandle(H);
+        return Ok;
+#else
+        const int Fd = open(File.c_str(), O_RDONLY);
+        if (Fd < 0) {
+            return false;
+        }
+        const bool Ok = fsync(Fd) == 0;
+        close(Fd);
+        return Ok;
+#endif
+    }
+
+    // Renombra Tmp sobre File reemplazando el destino; en Windows con WRITE_THROUGH
+    // (no vuelve hasta que el renombrado esta en disco).
+    bool ReplaceFile(const fs::path& Tmp, const fs::path& File) {
+#ifdef _WIN32
+        return MoveFileExW(Tmp.c_str(), File.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+        std::error_code Ec;
+        fs::rename(Tmp, File, Ec);
+        return !Ec;
+#endif
+    }
+
+    // Escritura atomica: archivo temporal propio de este proceso junto al destino,
+    // volcado a disco y renombrado. Ver detail::WriteConfigAtomicTo.
+    bool WriteConfigAtomic(const fs::path& File, const Json& Doc) {
+        return detail::WriteConfigAtomicTo(File, Doc, detail::TempConfigPath(File, CurrentPid()));
     }
 
     // Completa y corrige las claves que posee el launcher; el resto no se toca.
@@ -360,6 +380,47 @@ std::string GenerateInstallKey() {
 }
 
 namespace detail {
+
+    fs::path TempConfigPath(const fs::path& File, unsigned long Pid) {
+        fs::path Tmp = File;
+        Tmp += "." + std::to_string(Pid) + ".tmp";
+        return Tmp;
+    }
+
+    // El renombrado reemplaza el destino, asi que un corte deja el cfg viejo o el
+    // nuevo, nunca uno a medias. El temporal se vuelca a disco antes de renombrar y
+    // no queda ningun *.tmp ni al terminar bien ni al fallar.
+    bool WriteConfigAtomicTo(const fs::path& File, const Json& Doc, const fs::path& Tmp) {
+        std::error_code Ec;
+        try {
+            const fs::path Parent = File.parent_path();
+            if (!Parent.empty()) {
+                fs::create_directories(Parent, Ec);
+            }
+            {
+                std::ofstream Out(Tmp, std::ios::binary | std::ios::trunc);
+                if (!Out) {
+                    return false;
+                }
+                Out << Doc.dump(4, ' ', false, Json::error_handler_t::replace) << '
+';
+                Out.flush();
+                if (!Out) {
+                    Out.close();
+                    fs::remove(Tmp, Ec);
+                    return false;
+                }
+            }
+            if (!SyncFileToDisk(Tmp) || !ReplaceFile(Tmp, File)) {
+                fs::remove(Tmp, Ec);
+                return false;
+            }
+            return true;
+        } catch (...) {
+            fs::remove(Tmp, Ec);
+            return false;
+        }
+    }
 
     LauncherIdentity LoadOrCreateIdentityWith(const fs::path& CfgFile, const KeyGenerator& Generate) {
         try {

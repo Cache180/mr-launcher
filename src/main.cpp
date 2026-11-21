@@ -57,6 +57,9 @@ int main(int argc, const char** argv) try {
     } catch (const std::exception& e) {
         error(std::string("No se pudo iniciar el servidor HTTP local: algunas funciones del juego pueden no funcionar. Error: ") + e.what());
     }
+    // El puerto local se enlaza antes de tocar el juego: ocupado = fatal, sin PreGame ni InitGame.
+    // Otro fallo (no el puerto ocupado) lo reintenta CoreNetwork cada segundo, como siempre.
+    CoreListen();
     PreGame(GetGameDir());
     InitGame(GetGameDir());
     CoreNetwork();

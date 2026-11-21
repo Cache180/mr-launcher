@@ -6,6 +6,7 @@
 
 
 #include "Logger.h"
+#include "MRWire.h"
 #include <Zlib/Compressor.h>
 #include <chrono>
 #include <iostream>
@@ -129,6 +130,15 @@ std::string TCPRcv(SOCKET Sock) {
         return "";
     }
 
+    if (!MR::IsSaneFrameLength(Header)) {
+        // Longitud absurda: no se reserva memoria; se corta la conexion (el cierre del
+        // descriptor lo hace el dueno del socket, como en CheckBytes).
+        Terminate = true;
+        shutdown(Sock, SD_BOTH);
+        UUl("respuesta invalida del servidor");
+        return "";
+    }
+
     Data.resize(Header, 0);
     Temp = RecvWaitAll(Sock, Data.data(), Header);
     if (!CheckBytes(Temp, Header)) {
@@ -158,7 +168,7 @@ std::string TCPRcv(SOCKET Sock) {
     return Ret;
 }
 
-void TCPClientMain(const std::string& IP, int Port) {
+void TCPClientMain(const std::string& IP, int Port, MR::LauncherIdentity Identity) {
     LastIP = IP;
     LastPort = Port;
     SOCKADDR_IN ServerAddr;
@@ -192,7 +202,7 @@ void TCPClientMain(const std::string& IP, int Port) {
 
     char Code = 'C';
     send(TCPSock, &Code, 1, 0);
-    SyncResources(TCPSock);
+    SyncResources(TCPSock, Identity);
     while (!Terminate) {
         ServerParser(TCPRcv(TCPSock));
     }

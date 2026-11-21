@@ -138,10 +138,11 @@ SOCKET SetupListener() {
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
     hints.ai_flags = AI_PASSIVE;
-    iRes = getaddrinfo(nullptr, std::to_string(options.port + 1).c_str(), &hints, &result);
+    iRes = getaddrinfo("127.0.0.1", std::to_string(options.port + 1).c_str(), &hints, &result);
     if (iRes != 0) {
         error("(Proxy) info failed with error: " + std::to_string(iRes));
         WSACleanup();
+        return -1;
     }
     GSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
     if (GSocket == -1) {
@@ -226,7 +227,7 @@ void NetMain(const std::string& IP, int Port) {
     Terminate = true;
     info("Connection Terminated!");
 }
-void TCPGameServer(const std::string& IP, int Port) {
+void TCPGameServer(const std::string& IP, int Port, MR::LauncherIdentity Identity) {
     GSocket = SetupListener();
     std::unique_ptr<std::thread> ClientThread {};
     std::unique_ptr<std::thread> NetMainThread {};
@@ -241,7 +242,7 @@ void TCPGameServer(const std::string& IP, int Port) {
             break;
         }
         if (CServer) {
-            ClientThread = std::make_unique<std::thread>(TCPClientMain, IP, Port);
+            ClientThread = std::make_unique<std::thread>(TCPClientMain, IP, Port, Identity);
         }
         CSocket = accept(GSocket, nullptr, nullptr);
         if (CSocket == -1) {

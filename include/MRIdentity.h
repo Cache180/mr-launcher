@@ -75,6 +75,12 @@ namespace detail {
     using KeyGenerator = std::function<std::string()>;
     // Igual que LoadOrCreateIdentity pero con generador inyectable (pruebas).
     LauncherIdentity LoadOrCreateIdentityWith(const std::filesystem::path& CfgFile, const KeyGenerator& Generate);
+
+    // Temporal de escritura del cfg: <cfg>.<pid>.tmp, unico por proceso.
+    std::filesystem::path TempConfigPath(const std::filesystem::path& File, unsigned long Pid);
+    // Escribe Doc en Tmp, lo vuelca a disco y lo renombra sobre File. Tras volver (bien o
+    // mal) Tmp no existe. Expuesta para las pruebas; el resto usa TempConfigPath del pid propio.
+    bool WriteConfigAtomicTo(const std::filesystem::path& File, const nlohmann::ordered_json& Doc, const std::filesystem::path& Tmp);
 }
 
 }
