@@ -75,22 +75,31 @@ void UDPRcv(std::uint64_t Generation) {
 #endif
     ZeroMemory(&FromServer, clientLength);
     static thread_local std::array<char, 10240> Ret {};
-    if (UDPSock == -1)
+    if (UDPSock == -1) {
+        // Sin socket no hay nada que recibir: respiro para que ningun bucle llamador gire en vacio.
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
         return;
+    }
+    // Solo se mide la propia llamada de recepcion: lo que el hilo tarde despues en reenviar al
+    // juego (que puede congelarse) no es silencio del UDP y nunca llega al monitor.
+    const auto WaitStart = std::chrono::steady_clock::now();
     int32_t Rcv = recvfrom(UDPSock, Ret.data(), Ret.size() - 1, 0, (sockaddr*)&FromServer, &clientLength);
     if (Rcv == SOCKET_ERROR) {
-        // Espera agotada (1 s sin datagrama): no es un fallo; el bucle vuelve a mirar Terminate.
-        // Cualquier otro error inmediato: respiro de 100 ms para no girar en vacio (sin log por vuelta).
+        // Se lee el codigo de error antes de nada: tomar el candado del monitor podria pisarlo.
 #if defined(_WIN32)
         const bool TimedOut = WSAGetLastError() == WSAETIMEDOUT;
 #else
         const bool TimedOut = errno == EAGAIN || errno == EWOULDBLOCK;
 #endif
+        // Sin datagrama (espera agotada o error): lo esperado dentro de la propia llamada cuenta para el monitor.
+        MR::ActiveTransport().OnUdpWait(Generation, std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - WaitStart));
+        // Espera agotada (1 s sin datagrama): no es un fallo; el bucle vuelve a mirar Terminate.
+        // Cualquier otro error inmediato: respiro de 100 ms para no girar en vacio (sin log por vuelta).
         if (!TimedOut)
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         return;
     }
-    if (MR::ActiveTransport().OnUdpPacket(Generation, std::chrono::steady_clock::now()))
+    if (MR::ActiveTransport().OnUdpPacket(Generation))
         info("Conexion: UDP");
     Ret[Rcv] = 0;
     UDPParser(std::string_view(Ret.data(), Rcv));
@@ -114,7 +123,7 @@ void UDPClientMain(const std::string& IP, int Port) {
     // Un monitor por sesion (nace limpio; solo el cfg decide si arranca forzado a TCP).
     // Forzado: Begin pasa a TCP bajo su propio candado (Ft antes que cualquier otro envio) y
     // UdpUsed es false: no se manda ni se recibe nada por UDP en toda la sesion.
-    const auto Session = MR::ActiveTransport().Begin(ForceTcpTransport, std::chrono::steady_clock::now(), SendTransportFt);
+    const auto Session = MR::ActiveTransport().Begin(ForceTcpTransport, SendTransportFt);
     const std::uint64_t Generation = Session.Generation;
     if (Session.UdpUsed) {
     ToServer = new sockaddr_in;
@@ -146,10 +155,11 @@ void UDPClientMain(const std::string& IP, int Port) {
         debug("UDP receive loop done");
     } else {
         // Sin canal UDP: el socket nunca se envio nada (no esta enlazado), asi que recvfrom
-        // fallaria al instante. Solo se espera al cierre de la sesion.
+        // fallaria al instante. Solo se espera al cierre de la sesion, mirando Terminate cada 100 ms
+        // para que un reingreso rapido no encuentre la sesion anterior aun viva.
         debug("UDP no se usa en esta sesion (solo TCP)");
         while (!Terminate)
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     MR::ActiveTransport().End(Generation);
     KillSocket(UDPSock);

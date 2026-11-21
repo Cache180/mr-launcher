@@ -23,26 +23,34 @@ TransportMonitor::TransportMonitor(bool ForceTcp)
     : mForceTcp(ForceTcp) {
 }
 
-void TransportMonitor::OnUdpStarted(TimePoint Now) {
+void TransportMonitor::OnUdpStarted() {
     std::scoped_lock Guard(mLock);
     mStarted = true;
-    mStart = Now;
     mHavePacket = false;
+    mWaited = Duration::zero();
 }
 
-void TransportMonitor::OnUdpPacket(TimePoint Now) {
+void TransportMonitor::OnUdpWait(Duration Waited) {
+    if (Waited <= Duration::zero()) {
+        return; // un error que vuelve al instante no es espera
+    }
+    std::scoped_lock Guard(mLock);
+    mWaited += Waited;
+}
+
+void TransportMonitor::OnUdpPacket() {
     std::scoped_lock Guard(mLock);
     mHavePacket = true;
-    mLastPacket = Now;
+    mWaited = Duration::zero();
 }
 
-bool TransportMonitor::Tick(TimePoint Now) {
+bool TransportMonitor::Tick() {
     std::scoped_lock Guard(mLock);
     if (mCurrent == Transport::Tcp || !mStarted) {
         return false;
     }
     const bool Switch = mForceTcp
-        || (mHavePacket ? Now - mLastPacket >= SessionUdpSilence : Now - mStart >= InitialUdpGrace);
+        || mWaited >= (mHavePacket ? SessionUdpSilence : InitialUdpGrace);
     if (!Switch) {
         return false;
     }
@@ -87,15 +95,15 @@ bool UseSendLarge(std::string_view Data, bool Rel, Transport Current) {
     return Current == Transport::Tcp && !ShouldSendOverTcp(Data, Rel, Transport::Udp);
 }
 
-TransportSession::SessionStart TransportSession::Begin(bool ForceTcp, TimePoint Now, const std::function<void()>& SendFt) {
+TransportSession::SessionStart TransportSession::Begin(bool ForceTcp, const std::function<void()>& SendFt) {
     std::scoped_lock Guard(mGate);
     mMonitor = std::make_unique<TransportMonitor>(ForceTcp);
-    mMonitor->OnUdpStarted(Now);
+    mMonitor->OnUdpStarted();
     mUdpAnnounced = false;
     ++mGeneration;
     // Forzado: el cambio a TCP se hace aqui, bajo el mismo candado y con la misma regla que
     // TickAndAnnounce. Nadie observa Udp tras Begin(true) y Ft sale antes que cualquier otro envio.
-    const bool Forced = ForceTcp && mMonitor->Tick(Now);
+    const bool Forced = ForceTcp && mMonitor->Tick();
     if (Forced) {
         SendFt();
     }
@@ -109,12 +117,12 @@ void TransportSession::End(std::uint64_t Generation) {
     }
 }
 
-bool TransportSession::OnUdpPacket(std::uint64_t Generation, TimePoint Now) {
+bool TransportSession::OnUdpPacket(std::uint64_t Generation) {
     std::scoped_lock Guard(mGate);
     if (!mMonitor || Generation != mGeneration) {
         return false;
     }
-    mMonitor->OnUdpPacket(Now);
+    mMonitor->OnUdpPacket();
     if (mUdpAnnounced || mMonitor->Current() == Transport::Tcp) {
         return false;
     }
@@ -122,9 +130,16 @@ bool TransportSession::OnUdpPacket(std::uint64_t Generation, TimePoint Now) {
     return true;
 }
 
-bool TransportSession::TickAndAnnounce(TimePoint Now, const std::function<void()>& SendFt) {
+void TransportSession::OnUdpWait(std::uint64_t Generation, Duration Waited) {
     std::scoped_lock Guard(mGate);
-    if (!mMonitor || !mMonitor->Tick(Now)) {
+    if (mMonitor && Generation == mGeneration) {
+        mMonitor->OnUdpWait(Waited);
+    }
+}
+
+bool TransportSession::TickAndAnnounce(const std::function<void()>& SendFt) {
+    std::scoped_lock Guard(mGate);
+    if (!mMonitor || !mMonitor->Tick()) {
         return false;
     }
     // A proposito, SendFt (un send() TCP que puede bloquearse) corre con mGate cogido: es lo que
