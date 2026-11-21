@@ -154,14 +154,6 @@ namespace {
         return !Ec;
     }
 
-    unsigned long CurrentPid() {
-#ifdef _WIN32
-        return static_cast<unsigned long>(GetCurrentProcessId());
-#else
-        return static_cast<unsigned long>(getpid());
-#endif
-    }
-
     // Vuelca a disco el archivo ya escrito y cerrado (FlushFileBuffers / fsync).
     bool SyncFileToDisk(const fs::path& File) {
 #ifdef _WIN32
@@ -198,7 +190,7 @@ namespace {
     // Escritura atomica: archivo temporal propio de este proceso junto al destino,
     // volcado a disco y renombrado. Ver detail::WriteConfigAtomicTo.
     bool WriteConfigAtomic(const fs::path& File, const Json& Doc) {
-        return detail::WriteConfigAtomicTo(File, Doc, detail::TempConfigPath(File, CurrentPid()));
+        return detail::WriteConfigAtomicTo(File, Doc, detail::TempConfigPath(File, detail::CurrentProcessId()));
     }
 
     // Completa y corrige las claves que posee el launcher; el resto no se toca.
@@ -380,6 +372,14 @@ std::string GenerateInstallKey() {
 }
 
 namespace detail {
+
+    unsigned long CurrentProcessId() {
+#ifdef _WIN32
+        return static_cast<unsigned long>(GetCurrentProcessId());
+#else
+        return static_cast<unsigned long>(getpid());
+#endif
+    }
 
     fs::path TempConfigPath(const fs::path& File, unsigned long Pid) {
         fs::path Tmp = File;

@@ -8,6 +8,8 @@
 
 // Ayudas comunes de las pruebas: directorio temporal unico y E/S de archivos.
 
+#include "MRIdentity.h"
+
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -39,7 +41,8 @@ public:
 
     std::filesystem::path Path() const { return mPath; }
     std::filesystem::path Cfg() const { return mPath / "MR-Launcher.cfg"; }
-    std::filesystem::path Tmp() const { return mPath / "MR-Launcher.cfg.tmp"; }
+    // Temporal que usa WriteConfigAtomic en este proceso: ocuparlo impide la escritura.
+    std::filesystem::path Tmp() const { return MR::detail::TempConfigPath(Cfg(), MR::detail::CurrentProcessId()); }
 
 private:
     std::filesystem::path mPath;

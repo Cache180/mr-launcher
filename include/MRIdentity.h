@@ -76,6 +76,8 @@ namespace detail {
     // Igual que LoadOrCreateIdentity pero con generador inyectable (pruebas).
     LauncherIdentity LoadOrCreateIdentityWith(const std::filesystem::path& CfgFile, const KeyGenerator& Generate);
 
+    // Id del proceso (el que lleva el temporal de escritura del cfg).
+    unsigned long CurrentProcessId();
     // Temporal de escritura del cfg: <cfg>.<pid>.tmp, unico por proceso.
     std::filesystem::path TempConfigPath(const std::filesystem::path& File, unsigned long Pid);
     // Escribe Doc en Tmp, lo vuelca a disco y lo renombra sobre File. Tras volver (bien o
