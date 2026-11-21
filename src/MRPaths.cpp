@@ -73,7 +73,7 @@ fs::path ResolveCacheDir(const fs::path& Dir, const std::string& Configured) {
         return Wanted;
     }
     // Una raiz sin ser absoluta ("/x", "C:x") no puede escapar de la carpeta del exe.
-    return Dir / (Wanted.has_root_name() || Wanted.has_root_directory() ? Wanted.relative_path() : Wanted);
+    return Dir / (Wanted.has_root_name() || Wanted.has_root_directory() ? Wanted.relative_path() : Wanted).lexically_normal();
 }
 
 }
